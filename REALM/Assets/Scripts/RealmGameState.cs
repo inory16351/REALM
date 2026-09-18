@@ -12,6 +12,13 @@ namespace Realm
     }
 
     [Serializable]
+    public class ErrorMessage
+    {
+        public string type;
+        public string message;
+    }
+
+    [Serializable]
     public class GameState
     {
         public string roomCode;
@@ -25,7 +32,7 @@ namespace Realm
         public int round;
         public int turn;
         public int required;
-        public int lastRoll;
+        public DieRoll lastRoll;
         public ChatMessage[] chat;
         public string[] log;
         public YouState you;
@@ -61,6 +68,19 @@ namespace Realm
         public string id;
         public string type;
         public int round;
+    }
+
+    // The server sends the discard die as an object, not a bare number.
+    // Faces are 0 · 1 · 1 · 2 · 2 · 3.
+    [Serializable]
+    public class DieRoll
+    {
+        public string id;
+        public int playerIndex;
+        public int value;
+        public int faceIndex;
+        public int round;
+        public long rolledAt;
     }
 
     [Serializable]

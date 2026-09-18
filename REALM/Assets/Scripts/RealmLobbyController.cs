@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 namespace Realm
 {
@@ -11,20 +13,36 @@ namespace Realm
         [SerializeField] private InputField roomCodeInput;
         [SerializeField] private Button createRoomButton;
         [SerializeField] private Button joinRoomButton;
-        [SerializeField] private Text statusText;
+        [SerializeField] private TextMeshProUGUI statusText;
+        [SerializeField] private TMP_Dropdown playerTargetDropdown;
 
         [Header("Waiting Room Scene References")]
         [SerializeField] private GameObject lobbyContent;
         [SerializeField] private GameObject roomWaitingPanel;
-        [SerializeField] private Text waitingRoomCode;
-        [SerializeField] private Text rosterTitle;
-        [SerializeField] private Text hostRosterName;
+        [SerializeField] private TextMeshProUGUI waitingRoomCode;
+        [SerializeField] private TextMeshProUGUI rosterTitle;
 
         [SerializeField] private Button addBotButton;
         [SerializeField] private Button startGameButton;
+        [SerializeField] private RealmRoleSetup roleSetup;
 
         [Header("Game Play Panel Reference")]
         [SerializeField] private GameObject gamePlayPanel;
+
+        private const int MinPlayerTarget = 5;
+        private const int MaxPlayerTarget = 10;
+        private bool _isHost;
+        private bool _setupSent;
+
+        // The dropdown lists 5..10, so its index maps straight onto the count.
+        private int SelectedPlayerTarget
+        {
+            get
+            {
+                if (playerTargetDropdown == null) return MinPlayerTarget;
+                return Mathf.Clamp(playerTargetDropdown.value + MinPlayerTarget, MinPlayerTarget, MaxPlayerTarget);
+            }
+        }
 
         private void Awake()
         {
@@ -85,10 +103,10 @@ namespace Realm
                 startBtnTrans.offsetMin = Vector2.zero;
                 startBtnTrans.offsetMax = Vector2.zero;
 
-                var label = startBtnTrans.Find("StartGameButtonLabel")?.GetComponent<Text>();
+                var label = startBtnTrans.Find("StartGameButtonLabel")?.GetComponent<TextMeshProUGUI>();
                 if (label != null)
                 {
-                    label.alignment = TextAnchor.MiddleCenter;
+                    label.alignment = TextAlignmentOptions.Center;
                     label.text = "게임 시작";
                 }
             }
@@ -117,7 +135,7 @@ namespace Realm
             var textTrans = botBtnTrans.Find("AddBotButtonLabel") as RectTransform ?? botBtnTrans.Find("Text") as RectTransform;
             if (textTrans == null)
             {
-                var textGo = new GameObject("AddBotButtonLabel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+                var textGo = new GameObject("AddBotButtonLabel", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
                 textGo.transform.SetParent(botBtnTrans, false);
                 textTrans = textGo.GetComponent<RectTransform>();
             }
@@ -131,12 +149,13 @@ namespace Realm
             textTrans.offsetMin = Vector2.zero;
             textTrans.offsetMax = Vector2.zero;
 
-            var botText = textTrans.GetComponent<Text>();
+            var botText = textTrans.GetComponent<TextMeshProUGUI>();
             if (botText != null)
             {
-                botText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf") ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
-                botText.fontSize = 17;
-                botText.alignment = TextAnchor.MiddleCenter;
+                botText.font = RealmCard.GetNotoTmpFont();
+                botText.fontSize = 19;
+                botText.fontStyle = FontStyles.Bold;
+                botText.alignment = TextAlignmentOptions.Center;
                 botText.color = Color.white;
                 botText.text = "봇 추가";
             }
@@ -153,13 +172,13 @@ namespace Realm
                 startGameButton.onClick.AddListener(StartGame);
             }
 
-            var instructions = controlPanel.Find("WaitingInstructions")?.GetComponent<Text>();
+            var instructions = controlPanel.Find("WaitingInstructions")?.GetComponent<TextMeshProUGUI>();
             if (instructions != null)
             {
                 instructions.text = "5명이 모두 모이면 게임을 시작할 수 있습니다.\n'봇 추가'를 눌러 빈 자리를 봇으로 채울 수 있습니다.";
             }
 
-            var netStatus = controlPanel.Find("WaitingNetworkStatus")?.GetComponent<Text>();
+            var netStatus = controlPanel.Find("WaitingNetworkStatus")?.GetComponent<TextMeshProUGUI>();
             if (netStatus != null)
             {
                 netStatus.text = "● 온라인 서버 대기 중";
@@ -172,10 +191,32 @@ namespace Realm
             public string[] selected;
         }
 
+        private string[] _chosenRoles;
+
         private void EnsureSetup()
         {
-            var defaultRoles = new string[] { "king", "noble", "assassin", "beggar", "slave" };
-            RealmNetworkManager.Instance.SendMessagePayload("SETUP", new SetupPayload { selected = defaultRoles });
+            if (_chosenRoles == null || _chosenRoles.Length == 0) return;
+            RealmNetworkManager.Instance.SendMessagePayload("SETUP", new SetupPayload { selected = _chosenRoles });
+        }
+
+        private void OpenRoleSetup(int playerTarget)
+        {
+            if (roleSetup == null)
+            {
+                SetStatus("직업 선택 창을 찾을 수 없습니다.");
+                return;
+            }
+            roleSetup.OnConfirmed -= HandleRolesChosen;
+            roleSetup.OnConfirmed += HandleRolesChosen;
+            roleSetup.Open(playerTarget, _chosenRoles);
+        }
+
+        private void HandleRolesChosen(string[] roles)
+        {
+            _chosenRoles = roles;
+            _setupSent = false;
+            SetStatus($"직업 {roles.Length}종을 정했습니다. 참가자를 기다리세요.");
+            if (RealmNetworkManager.Instance != null) EnsureSetup();
         }
 
         private void AddBot()
@@ -188,6 +229,12 @@ namespace Realm
         private void StartGame()
         {
             Debug.Log("[RealmLobbyController] StartGame clicked");
+            if (_chosenRoles == null || _chosenRoles.Length == 0)
+            {
+                SetStatus("먼저 이번 판에 쓸 직업을 고르세요.");
+                OpenRoleSetup(SelectedPlayerTarget);
+                return;
+            }
             EnsureSetup();
             RealmNetworkManager.Instance.SendMessagePayload("START");
         }
@@ -206,7 +253,8 @@ namespace Realm
             joinRoomButton.interactable = false;
             
             var playerName = hostNameInput.text.Trim();
-            var code = await RealmNetworkManager.Instance.CreateRoom(playerName, 5, 60);
+            int target = SelectedPlayerTarget;
+            var code = await RealmNetworkManager.Instance.CreateRoom(playerName, target, 60);
             
             createRoomButton.interactable = true;
             joinRoomButton.interactable = true;
@@ -216,6 +264,8 @@ namespace Realm
                 roomCodeInput.text = code;
                 EnterWaitingRoom(code, playerName, true);
                 RealmNetworkManager.Instance.ConnectWebSocket(code);
+                // The host picks the roles for this room before anyone can start.
+                OpenRoleSetup(target);
             }
             else
             {
@@ -262,17 +312,21 @@ namespace Realm
 
         private void EnterWaitingRoom(string roomCode, string playerName, bool isHost)
         {
+            // Only the header is filled here; the roster itself is built by
+            // UpdateRoster as soon as the first server state arrives.
             waitingRoomCode.text = $"방 코드 · {roomCode}";
-            rosterTitle.text = isHost ? "참가자 · 1 / 5" : "참가자 · 참가 요청";
-            hostRosterName.text = isHost ? $"방장 · {playerName}" : $"참가자 · {playerName}";
+            rosterTitle.text = isHost ? $"참가자 · 1 / {SelectedPlayerTarget}" : "참가자 · 참가 요청";
             lobbyContent.SetActive(false);
             roomWaitingPanel.SetActive(true);
             if (gamePlayPanel != null) gamePlayPanel.SetActive(false);
 
             SetStatus("서버 연결 중...");
-            
-            // Setup default roles early
-            if (isHost) EnsureSetup();
+
+            // SETUP has to wait for the socket: EnterWaitingRoom runs before
+            // ConnectWebSocket, so sending here only produced a "연결이 끊어짐"
+            // toast and the roles never reached the server.
+            _isHost = isHost;
+            _setupSent = false;
 
             RealmNetworkManager.Instance.OnStateUpdated -= OnStateUpdated;
             RealmNetworkManager.Instance.OnStateUpdated += OnStateUpdated;
@@ -281,6 +335,14 @@ namespace Realm
         private void OnStateUpdated(GameState state)
         {
             if (state == null) return;
+
+            // The first state proves the socket is open, so this is the earliest
+            // point the host can actually deliver its role selection.
+            if (_isHost && !_setupSent && (state.selected == null || state.selected.Length == 0))
+            {
+                _setupSent = true;
+                EnsureSetup();
+            }
 
             // Transition to Game Play Panel if game started
             if (state.phase == "round" || state.phase == "actions" || state.phase == "results" || state.phase == "discussion")
@@ -314,38 +376,20 @@ namespace Realm
             var controlPanel = roomWaitingPanel.transform.Find("WaitingControlPanel");
             if (controlPanel != null)
             {
-                var netStatus = controlPanel.Find("WaitingNetworkStatus")?.GetComponent<Text>();
+                var netStatus = controlPanel.Find("WaitingNetworkStatus")?.GetComponent<TextMeshProUGUI>();
                 if (netStatus != null)
                 {
                     netStatus.text = $"● 온라인 접속 완료 ({state.players.Length}/{state.playerTarget})";
                 }
-            }
 
-            // Update roster slots
-            var rosterPanel = roomWaitingPanel.transform.Find("PlayerRosterPanel");
-            if (rosterPanel != null)
-            {
-                string[] slotNames = new[] { "PlayerSlotTemplate", "PlayerSlot02", "PlayerSlot03", "PlayerSlot04", "PlayerSlot05" };
-                for (int i = 0; i < slotNames.Length; i++)
+                var instructions = controlPanel.Find("WaitingInstructions")?.GetComponent<TextMeshProUGUI>();
+                if (instructions != null)
                 {
-                    var slot = rosterPanel.Find(slotNames[i]);
-                    if (slot == null) continue;
-
-                    var texts = slot.GetComponentsInChildren<Text>(true);
-                    if (i < state.players.Length)
-                    {
-                        var p = state.players[i];
-                        string rolePrefix = (i == 0) ? "방장" : (p.name.Contains("봇") ? "AI 봇" : "플레이어");
-                        if (texts.Length > 0) texts[0].text = $"{rolePrefix} · {p.name}";
-                        if (texts.Length > 1) texts[1].text = "준비 완료";
-                    }
-                    else
-                    {
-                        if (texts.Length > 0) texts[0].text = $"슬롯 {i + 1} · (비어있음)";
-                        if (texts.Length > 1) texts[1].text = "대기 중";
-                    }
+                    instructions.text = $"{state.playerTarget}명이 모두 모이면 게임을 시작할 수 있습니다.\n'봇 추가'를 눌러 빈 자리를 봇으로 채울 수 있습니다.";
                 }
             }
+
+            UpdateRoster(state);
 
             // Update button interactability
             if (addBotButton != null)
@@ -355,6 +399,51 @@ namespace Realm
             if (startGameButton != null)
             {
                 startGameButton.interactable = state.host && state.players.Length >= state.playerTarget;
+            }
+        }
+
+        // The room holds 5–10 players, so the roster clones its slot template to
+        // match playerTarget rather than relying on a fixed set of five.
+        private void UpdateRoster(GameState state)
+        {
+            var list = roomWaitingPanel.transform.Find("PlayerRosterPanel/RosterList");
+            if (list == null) return;
+            var template = list.Find("PlayerSlotTemplate");
+            if (template == null) return;
+
+            int needed = Mathf.Clamp(Mathf.Max(state.playerTarget, state.players.Length), 1, 10);
+
+            var slots = new List<Transform>();
+            foreach (Transform child in list)
+                if (child != template) slots.Add(child);
+
+            while (slots.Count < needed)
+            {
+                var clone = Instantiate(template.gameObject, list);
+                clone.name = $"PlayerSlot{slots.Count + 1:D2}";
+                clone.SetActive(true);
+                slots.Add(clone.transform);
+            }
+
+            for (int i = 0; i < slots.Count; i++)
+            {
+                bool used = i < needed;
+                if (slots[i].gameObject.activeSelf != used) slots[i].gameObject.SetActive(used);
+                if (!used) continue;
+
+                var texts = slots[i].GetComponentsInChildren<TextMeshProUGUI>(true);
+                bool filled = i < state.players.Length;
+                if (texts.Length > 0)
+                {
+                    if (filled)
+                    {
+                        var p = state.players[i];
+                        string rolePrefix = (i == 0) ? "방장" : (p.name.Contains("봇") ? "AI 봇" : "플레이어");
+                        texts[0].text = $"{rolePrefix} · {p.name}";
+                    }
+                    else texts[0].text = $"슬롯 {i + 1} · 비어있음";
+                }
+                if (texts.Length > 1) texts[1].text = filled ? "준비 완료" : "대기 중";
             }
         }
 

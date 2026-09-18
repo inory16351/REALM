@@ -1,115 +1,104 @@
-using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace Realm
 {
+    // Positions existing card-template instances only. The badge is not a card.
     public class DiscardPileHover : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler, IPointerClickHandler
     {
-        [Header("Hover Settings")]
-        [SerializeField] private float collapsedSpacing = -85f;
-        [SerializeField] private float expandedSpacing = 8f;
-        [SerializeField] private float animSpeed = 12f;
-
-        private HorizontalLayoutGroup _layoutGroup;
-        private bool _isHovered = false;
-        private bool _isPinned = false;
-        private float _currentSpacing;
-        private Coroutine _animRoutine;
+        [SerializeField] private float collapsedStep = 16;
+        [SerializeField] private float expandedGap = 8;
+        [SerializeField] private float animSpeed = 12;
+        private bool hovered;
+        private bool pinned;
+        private float currentStep;
+        private float expandedStep;
+        private RealmCard[] cards = new RealmCard[0];
+        private RectTransform rect;
+        private int restingSiblingIndex = -1;
 
         private void Awake()
         {
-            _layoutGroup = GetComponent<HorizontalLayoutGroup>();
-            if (_layoutGroup == null)
-            {
-                _layoutGroup = gameObject.AddComponent<HorizontalLayoutGroup>();
-                _layoutGroup.childAlignment = TextAnchor.MiddleLeft;
-                _layoutGroup.childControlWidth = false;
-                _layoutGroup.childControlHeight = false;
-                _layoutGroup.childForceExpandWidth = false;
-                _layoutGroup.childForceExpandHeight = false;
-            }
-
-            _currentSpacing = collapsedSpacing;
-            _layoutGroup.spacing = _currentSpacing;
-            ApplyStackRotation(false);
-        }
-
-        public void OnPointerEnter(PointerEventData eventData)
-        {
-            _isHovered = true;
-            AnimateTo(expandedSpacing, true);
-        }
-
-        public void OnPointerExit(PointerEventData eventData)
-        {
-            _isHovered = false;
-            if (!_isPinned)
-            {
-                AnimateTo(collapsedSpacing, false);
-            }
-        }
-
-        public void OnPointerClick(PointerEventData eventData)
-        {
-            _isPinned = !_isPinned;
-            AnimateTo(_isPinned || _isHovered ? expandedSpacing : collapsedSpacing, _isPinned || _isHovered);
+            rect = GetComponent<RectTransform>();
+            currentStep = collapsedStep;
         }
 
         public void RefreshStack()
         {
-            if (_layoutGroup != null)
-            {
-                _layoutGroup.spacing = (_isHovered || _isPinned) ? expandedSpacing : collapsedSpacing;
-            }
-            ApplyStackRotation(_isHovered || _isPinned);
+            cards = GetComponentsInChildren<RealmCard>(false);
+            if (rect == null) rect = GetComponent<RectTransform>();
+            restingSiblingIndex = transform.GetSiblingIndex();
+            var oldLayout = GetComponent<HorizontalLayoutGroup>();
+            if (oldLayout != null) oldLayout.enabled = false;
+            if (cards.Length == 0) return;
+
+            expandedStep = CardWidth() + expandedGap;
+            currentStep = collapsedStep;
+            var badge = transform.Find("Badge");
+            if (badge != null) badge.SetAsLastSibling();
+            LayoutCards();
         }
 
-        private void AnimateTo(float targetSpacing, bool expanded)
+        private void Update()
         {
-            if (_animRoutine != null) StopCoroutine(_animRoutine);
-            _animRoutine = StartCoroutine(AnimateSpacingRoutine(targetSpacing, expanded));
+            if (cards.Length == 0) return;
+            float desired = hovered || pinned ? expandedStep : collapsedStep;
+            currentStep = Mathf.Lerp(currentStep, desired,
+                1 - Mathf.Exp(-animSpeed * Time.unscaledDeltaTime));
+            LayoutCards();
         }
 
-        private IEnumerator AnimateSpacingRoutine(float targetSpacing, bool expanded)
+        private void LayoutCards()
         {
-            while (Mathf.Abs(_layoutGroup.spacing - targetSpacing) > 0.5f)
+            if (cards.Length == 0) return;
+            float width = CardWidth();
+            float shift = ExpansionShift(width);
+            for (int i = 0; i < cards.Length; i++)
             {
-                _currentSpacing = Mathf.Lerp(_layoutGroup.spacing, targetSpacing, Time.deltaTime * animSpeed);
-                _layoutGroup.spacing = _currentSpacing;
-                LayoutRebuilder.ForceRebuildLayoutImmediate(GetComponent<RectTransform>());
-                yield return null;
-            }
-
-            _layoutGroup.spacing = targetSpacing;
-            ApplyStackRotation(expanded);
-            _animRoutine = null;
-        }
-
-        private void ApplyStackRotation(bool expanded)
-        {
-            int count = transform.childCount;
-            for (int i = 0; i < count; i++)
-            {
-                var child = transform.GetChild(i) as RectTransform;
-                if (child == null || child.name == "Badge") continue;
-
-                if (expanded)
-                {
-                    child.localRotation = Quaternion.identity;
-                }
-                else
-                {
-                    float zRot = 0f;
-                    if (i == 1) zRot = -1.2f;
-                    else if (i == 2) zRot = 2.5f;
-                    else if (i == 3) zRot = 5.0f;
-                    else zRot = (i % 2 == 0) ? 3.0f : -2.0f;
-
-                    child.localRotation = Quaternion.Euler(0, 0, zRot);
-                }
+                var child = (RectTransform)cards[i].transform;
+                child.anchorMin = new Vector2(0, .5f);
+                child.anchorMax = new Vector2(0, .5f);
+                child.pivot = new Vector2(.5f, .5f);
+                child.anchoredPosition = new Vector2(6 + width / 2 + i * currentStep - shift, 0);
+                child.localRotation = Quaternion.Euler(0, 0, hovered || pinned ? 0 : (i % 2 == 0 ? -1.2f : 1.2f));
             }
         }
+
+        // Grave cards are displayed at a reduced scale, so every offset has to
+        // be measured after that scale rather than from the authored width.
+        private float CardWidth()
+        {
+            var card = (RectTransform)cards[0].transform;
+            return card.rect.width * card.localScale.x;
+        }
+
+        // A fanned pile is wider than its slot. Slots near the right edge slide
+        // the fan left so the last card never lands outside the row.
+        private float ExpansionShift(float cardWidth)
+        {
+            var row = rect.parent as RectTransform;
+            // Piles lay out once on creation, before the row has been sized.
+            // Treating that unresolved width as the row would shove the whole
+            // fan off-screen, so wait until the row is real.
+            if (row == null || row.rect.width <= 0f || cards.Length < 2) return 0f;
+
+            float fanWidth = 6f + cardWidth + (cards.Length - 1) * currentStep;
+            float leftEdge = rect.anchoredPosition.x - rect.rect.width * rect.pivot.x;
+            return Mathf.Max(0f, leftEdge + fanWidth - row.rect.width);
+        }
+
+        public void OnPointerEnter(PointerEventData e) { hovered = true; UpdateSorting(); }
+        public void OnPointerExit(PointerEventData e) { hovered = false; UpdateSorting(); }
+
+        // Slots are positioned by hand, so sibling order only affects draw order
+        // and a fanned pile can safely rise above the slots it overlaps.
+        private void UpdateSorting()
+        {
+            if (restingSiblingIndex < 0) restingSiblingIndex = transform.GetSiblingIndex();
+            if (hovered || pinned) transform.SetAsLastSibling();
+            else transform.SetSiblingIndex(restingSiblingIndex);
+        }
+        public void OnPointerClick(PointerEventData e) { pinned = !pinned; UpdateSorting(); }
     }
 }

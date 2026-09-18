@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
+using UnityEngine.EventSystems;
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 namespace Realm
 {
-    public class RealmCard : MonoBehaviour
+    public class RealmCard : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
     {
         public static readonly Dictionary<string, (string name, int score, string rule)> RoleInfo = new Dictionary<string, (string, int, string)>
         {
@@ -37,406 +38,185 @@ namespace Realm
             { "queen", ("왕비", 1, "왕비 2장 이상, 왕비 보유 수 단독 최다.") }
         };
 
-        private static readonly Dictionary<string, Sprite> ArtCache = new Dictionary<string, Sprite>();
-        private static Font s_NotoFont = null;
 
+        [Header("MCP-authored scene references")]
+        [SerializeField] private RectTransform liftVisual;
+        [SerializeField] private Image cardBack;
+        [SerializeField] private GameObject frontGroup;
+        [SerializeField] private Image illustration;
+        [SerializeField] private Image scoreBadge;
+        [SerializeField] private TextMeshProUGUI scoreText;
+        [SerializeField] private TextMeshProUGUI nameText;
+        [SerializeField] private GameObject ruleBox;
+        [SerializeField] private TextMeshProUGUI ruleText;
+        [SerializeField] private Image rim;
+        [SerializeField] private Image sideWall;
+        [SerializeField] private Button button;
+        [Header("Imported card illustrations (12 per role)")]
+        [SerializeField] private Sprite[] artLibrary;
+        [SerializeField] private Sprite correctedFarmerArt;
+        [Header("Presentation")]
+        [SerializeField] private Vector2 normalSize = new Vector2(182, 254.2222f);
+        [SerializeField] private Vector2 miniSize = new Vector2(122, 170.4127f);
+        [SerializeField] private Color rimColor = new Color(0.973f, 0.902f, 0.718f);
+        [SerializeField] private Color sideColor = new Color(0.584f, 0.494f, 0.333f);
+        [SerializeField] private Color selectedRim = new Color(0.90f, 0.39f, 0.42f);
+        [SerializeField] private float hoverLift = 7;
+        [SerializeField] private float selectedLift = 14;
+        [SerializeField] private float movementSpeed = 18;
+        private readonly Dictionary<string, Sprite> artByName = new Dictionary<string, Sprite>();
+        private RectTransform rect;
+        private bool hovered;
+        private bool isMini;
+        private static TMP_FontAsset notoFont;
         public string CardId { get; private set; }
         public string RoleType { get; private set; }
         public bool IsSelected { get; private set; }
-
         public event Action<RealmCard> OnClicked;
 
-        private RectTransform _rect;
-        private Image _cardBack;
-        private GameObject _frontGroup;
-        private Image _illustrationImage;
-        private Image _scoreBadge;
-        private Text _scoreText;
-        private Text _nameText;
-        private Image _ruleBoxImage;
-        private Text _ruleHeader;
-        private Text _ruleText;
-        private Outline _selectionOutline;
-        private Button _button;
-
-        private Vector2 _baseAnchoredPosition;
-
-        public static Font GetNotoFont()
+        // The baked Noto Sans KR SDF atlas. Dynamic population means a glyph
+        // outside the pre-baked set still renders instead of showing a box.
+        public static TMP_FontAsset GetNotoTmpFont()
         {
-            if (s_NotoFont == null)
-            {
-                s_NotoFont = Resources.Load<Font>("NotoSansKR");
-                if (s_NotoFont == null)
-                {
+            if (notoFont == null) notoFont = Resources.Load<TMP_FontAsset>("NotoSansKR SDF");
 #if UNITY_EDITOR
-                    s_NotoFont = UnityEditor.AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/NotoSansKR.ttf");
+            if (notoFont == null)
+                notoFont = UnityEditor.AssetDatabase.LoadAssetAtPath<TMP_FontAsset>("Assets/Resources/NotoSansKR SDF.asset");
 #endif
-                }
-                if (s_NotoFont == null)
-                {
-                    s_NotoFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf") ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
-                }
-            }
-            return s_NotoFont;
+            if (notoFont == null) notoFont = TMP_Settings.defaultFontAsset;
+            return notoFont;
         }
 
+        // All objects and references are authored in the scene via MCP.
+        // Runtime only changes data and animates the existing hierarchy.
         private void Awake()
         {
-            _rect = GetComponent<RectTransform>();
-            EnsureUIHierarchy();
+            rect = GetComponent<RectTransform>();
+            if (button != null) button.onClick.AddListener(HandleClick);
         }
 
         public void Setup(string cardId, string roleType, bool selectable = true, bool mini = false)
         {
-            CardId = cardId;
-            RoleType = roleType;
-            IsSelected = false;
-
-            if (_button != null)
+            if (cardBack == null || frontGroup == null || illustration == null)
             {
-                _button.interactable = selectable;
-            }
-
-            if (_rect != null)
-            {
-                _rect.sizeDelta = mini ? new Vector2(100f, 140f) : new Vector2(136f, 190f);
-            }
-
-            if (string.IsNullOrEmpty(roleType))
-            {
-                // Face-down
-                _cardBack.gameObject.SetActive(true);
-                _frontGroup.SetActive(false);
+                Debug.LogError("RealmCard requires the MCP-authored RealmCardTemplate scene references.", this);
                 return;
             }
+            if (rect == null) rect = GetComponent<RectTransform>();
+            CardId = cardId;
+            RoleType = roleType;
+            isMini = mini;
+            hovered = false;
+            rect.localScale = Vector3.one;
+            rect.sizeDelta = mini ? miniSize : normalSize;
+            if (button != null) button.interactable = selectable;
+            bool faceUp = !string.IsNullOrEmpty(roleType);
+            cardBack.gameObject.SetActive(!faceUp);
+            frontGroup.SetActive(faceUp);
+            SetSelected(false);
+            if (!faceUp) return;
 
-            // Face-up
-            _cardBack.gameObject.SetActive(false);
-            _frontGroup.SetActive(true);
+            if (artByName.Count == 0 && artLibrary != null)
+                foreach (var art in artLibrary)
+                    if (art != null) artByName[art.name] = art;
+            int copy = 0;
+            var parts = (cardId ?? "").Split('-');
+            if (parts.Length > 1) int.TryParse(parts[parts.Length - 1], out copy);
+            int variant = copy >= 0 && copy < 12 ? copy + 1 : 1;
+            Sprite sprite;
+            if (roleType == "farmer" && variant == 12 && correctedFarmerArt != null)
+                sprite = correctedFarmerArt;
+            else artByName.TryGetValue($"{roleType}-{variant:D2}", out sprite);
+            illustration.sprite = sprite;
 
-            // Load illustration
-            var sprite = GetOrLoadArt(cardId, roleType);
-            if (sprite != null && _illustrationImage != null)
-            {
-                _illustrationImage.sprite = sprite;
-                _illustrationImage.color = Color.white;
-            }
-
-            // Role data
             if (RoleInfo.TryGetValue(roleType, out var info))
             {
-                _nameText.text = info.name;
-                _ruleText.text = info.rule;
-
-                // Score badge
-                int score = info.score;
-                _scoreText.text = score > 0 ? $"+{score}" : $"{score}";
-                if (score > 0)
-                    _scoreBadge.color = new Color(0.11f, 0.37f, 0.13f, 1f); // Green
-                else if (score < 0)
-                    _scoreBadge.color = new Color(0.72f, 0.11f, 0.11f, 1f); // Red
-                else
-                    _scoreBadge.color = new Color(0.01f, 0.34f, 0.61f, 1f); // Blue
+                nameText.text = info.name;
+                ruleText.text = info.rule;
+                scoreText.text = info.score > 0 ? $"+{info.score}" : info.score.ToString();
+                scoreBadge.color = info.score > 0 ? new Color(0.106f, 0.369f, 0.125f) :
+                    info.score < 0 ? new Color(0.718f, 0.11f, 0.11f) : new Color(0.004f, 0.341f, 0.608f);
             }
             else
             {
-                _nameText.text = roleType;
-                _ruleText.text = "";
-                _scoreText.text = "0";
-                _scoreBadge.color = Color.gray;
+                nameText.text = roleType;
+                ruleText.text = "";
+                scoreText.text = "0";
+                scoreBadge.color = Color.gray;
             }
+            ruleBox.SetActive(!mini);
+            var ruleShadow = frontGroup.transform.Find("RCT_RuleShadow");
+            if (ruleShadow != null) ruleShadow.gameObject.SetActive(!mini);
+            nameText.enableAutoSizing = true;
+            nameText.fontSizeMax = mini ? 13 : 22;
+            nameText.fontSizeMin = mini ? 10 : 16;
+            nameText.fontStyle = FontStyles.Bold;
+            nameText.textWrappingMode = TextWrappingModes.NoWrap;
+            nameText.overflowMode = TextOverflowModes.Ellipsis;
 
-            if (mini)
-            {
-                if (_ruleBoxImage != null) _ruleBoxImage.gameObject.SetActive(false);
-                if (_nameText != null) _nameText.fontSize = 13;
-                if (_scoreText != null) _scoreText.fontSize = 11;
-            }
-            else
-            {
-                if (_ruleBoxImage != null) _ruleBoxImage.gameObject.SetActive(true);
-                if (_nameText != null) _nameText.fontSize = 16;
-                if (_scoreText != null) _scoreText.fontSize = 14;
-            }
+            scoreText.fontSize = mini ? 13 : 20;
+            scoreText.fontStyle = FontStyles.Bold;
 
-            SetSelected(false);
+            // Win conditions vary a lot in length, so the rule box shrinks to
+            // fit rather than clipping the tail of the longer ones.
+            ruleText.enableAutoSizing = true;
+            ruleText.fontSizeMax = mini ? 12 : 15;
+            ruleText.fontSizeMin = mini ? 7 : 8;
+            ruleText.fontStyle = FontStyles.Bold;
+            // Win conditions are sentences: they wrap inside the box rather
+            // than running off both edges of the card.
+            ruleText.textWrappingMode = TextWrappingModes.Normal;
+            ruleText.overflowMode = TextOverflowModes.Overflow;
+            ruleText.alignment = TextAlignmentOptions.Center;
+        }
+
+        // Public discard cards remain compact, but retain their condition panel.
+        // This only toggles MCP-authored objects; it does not create UI at runtime.
+        public void SetRuleVisible(bool visible)
+        {
+            if (ruleBox != null) ruleBox.SetActive(visible);
+            if (frontGroup != null)
+            {
+                var ruleShadow = frontGroup.transform.Find("RCT_RuleShadow");
+                if (ruleShadow != null) ruleShadow.gameObject.SetActive(visible);
+            }
+            if (visible && isMini && ruleText != null)
+            {
+                ruleText.fontSize = 12;
+                ruleText.enableAutoSizing = true;
+                ruleText.fontSizeMin = 9;
+                ruleText.fontSizeMax = 12;
+            }
+        }
+
+        // The dense hand view scales the existing MCP-authored card template.
+        // No child UI is created or replaced at runtime.
+        public void SetDisplayScale(float scale)
+        {
+            if (rect == null) rect = GetComponent<RectTransform>();
+            if (rect != null) rect.localScale = Vector3.one * Mathf.Clamp(scale, 0.5f, 1f);
         }
 
         public void SetSelected(bool selected)
         {
             IsSelected = selected;
-            if (_selectionOutline != null)
-            {
-                _selectionOutline.enabled = selected;
-            }
-
-            if (_rect != null)
-            {
-                _rect.anchoredPosition = selected ? _baseAnchoredPosition + new Vector2(0, 18f) : _baseAnchoredPosition;
-            }
+            if (rim != null) rim.color = selected ? selectedRim : rimColor;
+            if (sideWall != null) sideWall.color = selected ? new Color(0.43f, 0.15f, 0.19f) : sideColor;
+            if (!Application.isPlaying && liftVisual != null)
+                liftVisual.anchoredPosition = new Vector2(0, selected ? selectedLift : 0);
         }
 
-        private void OnButtonClick()
+        private void Update()
         {
-            OnClicked?.Invoke(this);
+            if (liftVisual == null) return;
+            float target = IsSelected ? selectedLift : hovered && !isMini ? hoverLift : 0;
+            liftVisual.anchoredPosition = Vector2.Lerp(liftVisual.anchoredPosition,
+                new Vector2(0, target), 1 - Mathf.Exp(-movementSpeed * Time.unscaledDeltaTime));
         }
-
-        private Sprite GetOrLoadArt(string cardId, string roleType)
-        {
-            int variant = 1;
-            if (!string.IsNullOrEmpty(cardId))
-            {
-                var parts = cardId.Split('-');
-                if (parts.Length > 1 && int.TryParse(parts[parts.Length - 1], out int copy))
-                {
-                    variant = (copy >= 0 && copy < 12) ? copy + 1 : 1;
-                }
-            }
-
-            string key = $"{roleType}-{variant:D2}";
-            if (ArtCache.TryGetValue(key, out var cached) && cached != null)
-            {
-                return cached;
-            }
-
-            string diskPath = Path.Combine(Application.dataPath, "Textures", "RoleCardArt", $"{key}.jpg");
-            if (File.Exists(diskPath))
-            {
-                byte[] bytes = File.ReadAllBytes(diskPath);
-                var tex = new Texture2D(2, 2);
-                if (tex.LoadImage(bytes))
-                {
-                    var spr = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f));
-                    ArtCache[key] = spr;
-                    return spr;
-                }
-            }
-
-            return null;
-        }
-
-        private void EnsureUIHierarchy()
-        {
-            Font font = GetNotoFont();
-
-            if (_rect == null) _rect = gameObject.AddComponent<RectTransform>();
-            _rect.sizeDelta = new Vector2(136f, 190f);
-
-            _button = GetComponent<Button>();
-            if (_button == null) _button = gameObject.AddComponent<Button>();
-            _button.transition = Selectable.Transition.ColorTint;
-            _button.onClick.RemoveAllListeners();
-            _button.onClick.AddListener(OnButtonClick);
-
-            _selectionOutline = GetComponent<Outline>();
-            if (_selectionOutline == null) _selectionOutline = gameObject.AddComponent<Outline>();
-            _selectionOutline.effectColor = new Color(1f, 0.88f, 0.45f, 1f); // Warm gold glow
-            _selectionOutline.effectDistance = new Vector2(3.5f, 3.5f);
-            _selectionOutline.enabled = false;
-
-            // 1. Card Back
-            var backTrans = transform.Find("CardBack") as RectTransform;
-            if (backTrans == null)
-            {
-                var backGo = new GameObject("CardBack", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-                backGo.transform.SetParent(transform, false);
-                backTrans = backGo.GetComponent<RectTransform>();
-            }
-            backTrans.anchorMin = Vector2.zero;
-            backTrans.anchorMax = Vector2.one;
-            backTrans.offsetMin = Vector2.zero;
-            backTrans.offsetMax = Vector2.zero;
-            _cardBack = backTrans.GetComponent<Image>();
-            _cardBack.color = new Color(0.12f, 0.22f, 0.35f, 1f);
-
-            // Load CardBack_Cropped sprite if available
-            string backPath = Path.Combine(Application.dataPath, "Textures", "CardBack_Cropped.jpg");
-            if (File.Exists(backPath) && !ArtCache.ContainsKey("CARDBACK"))
-            {
-                byte[] b = File.ReadAllBytes(backPath);
-                var t = new Texture2D(2, 2);
-                if (t.LoadImage(b))
-                {
-                    ArtCache["CARDBACK"] = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f));
-                }
-            }
-            if (ArtCache.TryGetValue("CARDBACK", out var backSpr))
-            {
-                _cardBack.sprite = backSpr;
-                _cardBack.color = Color.white;
-            }
-
-            // 2. Front Group
-            var frontTrans = transform.Find("FrontGroup") as RectTransform;
-            if (frontTrans == null)
-            {
-                var frontGo = new GameObject("FrontGroup", typeof(RectTransform));
-                frontGo.transform.SetParent(transform, false);
-                frontTrans = frontGo.GetComponent<RectTransform>();
-            }
-            frontTrans.anchorMin = Vector2.zero;
-            frontTrans.anchorMax = Vector2.one;
-            frontTrans.offsetMin = Vector2.zero;
-            frontTrans.offsetMax = Vector2.zero;
-            _frontGroup = frontTrans.gameObject;
-
-            // 2a. Full illustration
-            var illTrans = frontTrans.Find("Illustration") as RectTransform;
-            if (illTrans == null)
-            {
-                var illGo = new GameObject("Illustration", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-                illGo.transform.SetParent(frontTrans, false);
-                illTrans = illGo.GetComponent<RectTransform>();
-            }
-            illTrans.anchorMin = Vector2.zero;
-            illTrans.anchorMax = Vector2.one;
-            illTrans.offsetMin = Vector2.zero;
-            illTrans.offsetMax = Vector2.zero;
-            _illustrationImage = illTrans.GetComponent<Image>();
-            _illustrationImage.color = new Color(0.07f, 0.15f, 0.23f, 1f);
-
-            // 2b. Top Header Banner
-            var bannerTrans = frontTrans.Find("TopBanner") as RectTransform;
-            if (bannerTrans == null)
-            {
-                var bannerGo = new GameObject("TopBanner", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-                bannerGo.transform.SetParent(frontTrans, false);
-                bannerTrans = bannerGo.GetComponent<RectTransform>();
-            }
-            bannerTrans.anchorMin = new Vector2(0f, 0.77f);
-            bannerTrans.anchorMax = Vector2.one;
-            bannerTrans.offsetMin = Vector2.zero;
-            bannerTrans.offsetMax = Vector2.zero;
-            var bannerImg = bannerTrans.GetComponent<Image>();
-            bannerImg.color = new Color(0.04f, 0.12f, 0.20f, 0.90f);
-
-            // 2c. Score Badge inside banner
-            var badgeTrans = bannerTrans.Find("ScoreBadge") as RectTransform;
-            if (badgeTrans == null)
-            {
-                var badgeGo = new GameObject("ScoreBadge", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-                badgeGo.transform.SetParent(bannerTrans, false);
-                badgeTrans = badgeGo.GetComponent<RectTransform>();
-            }
-            badgeTrans.anchorMin = new Vector2(0.04f, 0.12f);
-            badgeTrans.anchorMax = new Vector2(0.25f, 0.88f);
-            badgeTrans.offsetMin = Vector2.zero;
-            badgeTrans.offsetMax = Vector2.zero;
-            _scoreBadge = badgeTrans.GetComponent<Image>();
-
-            var scoreTextTrans = badgeTrans.Find("Text") as RectTransform;
-            if (scoreTextTrans == null)
-            {
-                var stGo = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-                stGo.transform.SetParent(badgeTrans, false);
-                scoreTextTrans = stGo.GetComponent<RectTransform>();
-            }
-            scoreTextTrans.anchorMin = Vector2.zero;
-            scoreTextTrans.anchorMax = Vector2.one;
-            scoreTextTrans.offsetMin = Vector2.zero;
-            scoreTextTrans.offsetMax = Vector2.zero;
-            _scoreText = scoreTextTrans.GetComponent<Text>();
-            _scoreText.font = font;
-            _scoreText.fontSize = 14;
-            _scoreText.fontStyle = FontStyle.Bold;
-            _scoreText.alignment = TextAnchor.MiddleCenter;
-            _scoreText.color = Color.white;
-
-            // 2d. Role Name Text inside banner
-            var nameTrans = bannerTrans.Find("RoleName") as RectTransform;
-            if (nameTrans == null)
-            {
-                var nameGo = new GameObject("RoleName", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-                nameGo.transform.SetParent(bannerTrans, false);
-                nameTrans = nameGo.GetComponent<RectTransform>();
-            }
-            nameTrans.anchorMin = new Vector2(0.28f, 0.05f);
-            nameTrans.anchorMax = new Vector2(0.96f, 0.95f);
-            nameTrans.offsetMin = Vector2.zero;
-            nameTrans.offsetMax = Vector2.zero;
-            _nameText = nameTrans.GetComponent<Text>();
-            _nameText.font = font;
-            _nameText.fontSize = 16;
-            _nameText.fontStyle = FontStyle.Bold;
-            _nameText.alignment = TextAnchor.MiddleLeft;
-            _nameText.color = new Color(1f, 0.91f, 0.65f, 1f); // #ffe7a7
-
-            // 2e. Bottom Rule Box (using card-rule-slot-v1)
-            var ruleBoxTrans = frontTrans.Find("RuleBox") as RectTransform;
-            if (ruleBoxTrans == null)
-            {
-                var rbGo = new GameObject("RuleBox", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-                rbGo.transform.SetParent(frontTrans, false);
-                ruleBoxTrans = rbGo.GetComponent<RectTransform>();
-            }
-            ruleBoxTrans.anchorMin = new Vector2(0.04f, 0.04f);
-            ruleBoxTrans.anchorMax = new Vector2(0.96f, 0.36f);
-            ruleBoxTrans.offsetMin = Vector2.zero;
-            ruleBoxTrans.offsetMax = Vector2.zero;
-            _ruleBoxImage = ruleBoxTrans.GetComponent<Image>();
-            _ruleBoxImage.color = new Color(0.98f, 0.97f, 0.94f, 0.96f);
-
-            // Load card-rule-slot-v1.png if available
-            string ruleSlotPath = Path.Combine(Application.dataPath, "Textures", "card-rule-slot-v1.png");
-            if (File.Exists(ruleSlotPath) && !ArtCache.ContainsKey("RULE_SLOT"))
-            {
-                byte[] b = File.ReadAllBytes(ruleSlotPath);
-                var t = new Texture2D(2, 2);
-                if (t.LoadImage(b))
-                {
-                    ArtCache["RULE_SLOT"] = Sprite.Create(t, new Rect(0, 0, t.width, t.height), new Vector2(0.5f, 0.5f));
-                }
-            }
-            if (ArtCache.TryGetValue("RULE_SLOT", out var ruleSlotSpr))
-            {
-                _ruleBoxImage.sprite = ruleSlotSpr;
-                _ruleBoxImage.color = Color.white;
-            }
-
-            var rbOutline = ruleBoxTrans.GetComponent<Outline>();
-            if (rbOutline == null) rbOutline = ruleBoxTrans.gameObject.AddComponent<Outline>();
-            rbOutline.effectColor = new Color(0.25f, 0.18f, 0.10f, 0.8f);
-            rbOutline.effectDistance = new Vector2(1f, -1f);
-
-            // Rule Header "[승리조건]"
-            var rhTrans = ruleBoxTrans.Find("Header") as RectTransform;
-            if (rhTrans == null)
-            {
-                var rhGo = new GameObject("Header", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-                rhGo.transform.SetParent(ruleBoxTrans, false);
-                rhTrans = rhGo.GetComponent<RectTransform>();
-            }
-            rhTrans.anchorMin = new Vector2(0.06f, 0.68f);
-            rhTrans.anchorMax = new Vector2(0.94f, 0.98f);
-            rhTrans.offsetMin = Vector2.zero;
-            rhTrans.offsetMax = Vector2.zero;
-            _ruleHeader = rhTrans.GetComponent<Text>();
-            _ruleHeader.font = font;
-            _ruleHeader.fontSize = 10;
-            _ruleHeader.fontStyle = FontStyle.Bold;
-            _ruleHeader.alignment = TextAnchor.MiddleLeft;
-            _ruleHeader.color = new Color(0.83f, 0.18f, 0.18f, 1f); // Red
-            _ruleHeader.text = "승리조건";
-
-            // Rule Description Text
-            var rdTrans = ruleBoxTrans.Find("Description") as RectTransform;
-            if (rdTrans == null)
-            {
-                var rdGo = new GameObject("Description", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-                rdGo.transform.SetParent(ruleBoxTrans, false);
-                rdTrans = rdGo.GetComponent<RectTransform>();
-            }
-            rdTrans.anchorMin = new Vector2(0.06f, 0.04f);
-            rdTrans.anchorMax = new Vector2(0.94f, 0.70f);
-            rdTrans.offsetMin = Vector2.zero;
-            rdTrans.offsetMax = Vector2.zero;
-            _ruleText = rdTrans.GetComponent<Text>();
-            _ruleText.font = font;
-            _ruleText.fontSize = 10;
-            _ruleText.alignment = TextAnchor.UpperLeft;
-            _ruleText.color = new Color(0.10f, 0.10f, 0.10f, 1f);
-            _ruleText.horizontalOverflow = HorizontalWrapMode.Wrap;
-            _ruleText.verticalOverflow = VerticalWrapMode.Truncate;
-        }
+        public void OnPointerEnter(PointerEventData e) { hovered = button != null && button.interactable; }
+        public void OnPointerExit(PointerEventData e) { hovered = false; }
+        private void OnDisable() { hovered = false; }
+        private void HandleClick() { OnClicked?.Invoke(this); }
+        private void OnDestroy() { if (button != null) button.onClick.RemoveListener(HandleClick); }
     }
 }

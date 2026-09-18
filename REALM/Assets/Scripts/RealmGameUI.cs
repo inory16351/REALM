@@ -5,6 +5,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using TMPro;
 
 namespace Realm
 {
@@ -12,48 +13,79 @@ namespace Realm
     {
         [Header("Card Prefab")]
         [SerializeField] public GameObject cardPrefab;
+        [SerializeField] private Sprite uiPanelSprite;
+
+        [Header("Runtime Plate Sprites")]
+        [SerializeField] private Sprite publicSlotSprite;
+        [SerializeField] private Sprite secretSlotSprite;
+        [SerializeField] private Sprite roundBadgeSprite;
+        [SerializeField] private Sprite secretBadgeSprite;
+        [SerializeField] private Sprite pillIdleSprite;
+        [SerializeField] private Sprite pillTurnSprite;
+        [SerializeField] private Sprite pillSelfSprite;
 
         [Header("Main Play Area (Left Panel)")]
-        [SerializeField] public Text roundEyebrowText;
-        [SerializeField] public Text turnHeadingText;
+        [SerializeField] public TextMeshProUGUI roundEyebrowText;
+        [SerializeField] public TextMeshProUGUI turnHeadingText;
         [SerializeField] public Transform playersStripContainer;
-        [SerializeField] public Text secretRoleText;
-        [SerializeField] public Text lastRollText;
-        [SerializeField] public Text turnPromptText;
+        [SerializeField] public TextMeshProUGUI secretRoleText;
+        [SerializeField] public TextMeshProUGUI lastRollText;
+        [SerializeField] public TextMeshProUGUI turnPromptText;
 
         [Header("Card Sockets & Hand (10 Slots)")]
         [SerializeField] public Transform cardSocketsContainer;
-        [SerializeField] public Text selectionCountText;
+        [SerializeField] public TextMeshProUGUI selectionCountText;
         [SerializeField] public Button discardConfirmButton;
 
-        [Header("Public Grave Area (Right Panel)")]
+        [Header("Public Grave Modal")]
         [SerializeField] public Transform graveListContainer;
+        [SerializeField] public GameObject graveModal;
+        [SerializeField] public Button openGraveButton;
+        [SerializeField] public Button closeGraveButton;
 
         [Header("Action Phase Modal")]
         [SerializeField] public GameObject actionPanel;
-        [SerializeField] public Text actionTitleText;
-        [SerializeField] public Dropdown targetDropdown1;
-        [SerializeField] public Dropdown roleDropdown1;
+        [SerializeField] public TextMeshProUGUI actionTitleText;
+        [SerializeField] public TMP_Dropdown targetDropdown1;
+        [SerializeField] public TMP_Dropdown roleDropdown1;
         [SerializeField] public Button actionConfirmButton;
 
         [Header("Discussion Phase Modal")]
         [SerializeField] public GameObject discussionPanel;
-        [SerializeField] public Text discussionTimerText;
-        [SerializeField] public Text skipVotesText;
+        [SerializeField] public TextMeshProUGUI discussionTimerText;
+        [SerializeField] public TextMeshProUGUI skipVotesText;
         [SerializeField] public Button skipDiscussionButton;
-        [SerializeField] public Text chatLogText;
+        [SerializeField] public TextMeshProUGUI chatLogText;
         [SerializeField] public InputField chatInputField;
         [SerializeField] public Button chatSendButton;
 
+        [Header("Dice Stage")]
+        [SerializeField] public RealmDiceRoll diceRoll;
+
+        [Header("In-Game Warning Toast")]
+        [SerializeField] public GameObject warningToast;
+        [SerializeField] public TextMeshProUGUI warningToastText;
+
         [Header("Results Phase Modal")]
         [SerializeField] public GameObject resultsPanel;
-        [SerializeField] public Text resultsRankingsText;
+        [SerializeField] public TextMeshProUGUI resultsRankingsText;
         [SerializeField] public Button returnLobbyButton;
 
         private readonly List<RealmCard> _spawnedCards = new List<RealmCard>();
         private readonly List<string> _chosenCardIds = new List<string>();
         private readonly List<Transform> _socketSlots = new List<Transform>();
+        private const float CardWidth = 182f;
+        private const float CardHeight = 254.2222f;
+        private const int GraveSlotCount = 4;
+        private const float GraveSlotSpacing = 12f;
+        private const float GraveContentPadding = 38f;
+        private const float GraveCardScale = 0.78f;
+        private const float GraveSlotHeight = 226f;
+        private const float GraveRowHeight = 284f;
         private GameState _latestState;
+        private CanvasGroup _warningCanvasGroup;
+        private float _warningHideAt = -1f;
+        private bool _diceWasRolling;
 
         private void Awake()
         {
@@ -64,8 +96,15 @@ namespace Realm
             if (skipDiscussionButton != null) skipDiscussionButton.onClick.AddListener(OnSkipDiscussionClicked);
             if (chatSendButton != null) chatSendButton.onClick.AddListener(OnSendChatClicked);
             if (returnLobbyButton != null) returnLobbyButton.onClick.AddListener(OnReturnLobbyClicked);
+            if (openGraveButton != null) openGraveButton.onClick.AddListener(OnOpenGraveClicked);
+            if (closeGraveButton != null) closeGraveButton.onClick.AddListener(OnCloseGraveClicked);
 
             CacheSockets();
+            if (warningToast != null)
+            {
+                _warningCanvasGroup = warningToast.GetComponent<CanvasGroup>();
+                warningToast.SetActive(false);
+            }
         }
 
         private void Start()
@@ -73,6 +112,7 @@ namespace Realm
             if (RealmNetworkManager.Instance != null)
             {
                 RealmNetworkManager.Instance.OnStateUpdated += OnStateUpdated;
+                RealmNetworkManager.Instance.OnServerError += ShowWarning;
             }
         }
 
@@ -81,7 +121,47 @@ namespace Realm
             if (RealmNetworkManager.Instance != null)
             {
                 RealmNetworkManager.Instance.OnStateUpdated -= OnStateUpdated;
+                RealmNetworkManager.Instance.OnServerError -= ShowWarning;
             }
+        }
+
+        private void Update()
+        {
+            // The dice finishes on a timer, not on a server message, so the
+            // discard controls have to be re-enabled from here.
+            if (diceRoll != null)
+            {
+                if (diceRoll.IsRolling) _diceWasRolling = true;
+                else if (_diceWasRolling)
+                {
+                    _diceWasRolling = false;
+                    UpdateDiscardButtonStatus();
+                }
+            }
+
+            if (_warningCanvasGroup == null || warningToast == null || !warningToast.activeSelf) return;
+
+            float remaining = _warningHideAt - Time.unscaledTime;
+            if (remaining <= 0f)
+            {
+                warningToast.SetActive(false);
+                return;
+            }
+
+            // 0.18s fade-in and 0.42s fade-out without a runtime-created object.
+            _warningCanvasGroup.alpha = remaining > 3.1f
+                ? Mathf.Clamp01((3.35f - remaining) / 0.18f)
+                : Mathf.Clamp01(remaining / 0.42f);
+        }
+
+        public void ShowWarning(string message)
+        {
+            if (warningToast == null || warningToastText == null) return;
+            warningToastText.text = string.IsNullOrWhiteSpace(message) ? "요청을 처리할 수 없습니다." : message;
+            warningToast.SetActive(true);
+            if (_warningCanvasGroup == null) _warningCanvasGroup = warningToast.GetComponent<CanvasGroup>();
+            if (_warningCanvasGroup != null) _warningCanvasGroup.alpha = 0f;
+            _warningHideAt = Time.unscaledTime + 3.35f;
         }
 
         private void CacheSockets()
@@ -98,51 +178,65 @@ namespace Realm
 
         public void AutoWireReferences()
         {
-            var font = RealmCard.GetNotoFont();
+            var font = RealmCard.GetNotoTmpFont();
 
-            if (roundEyebrowText == null) roundEyebrowText = transform.Find("MainPlayArea/TopHeader/RoundEyebrowText")?.GetComponent<Text>();
-            if (turnHeadingText == null) turnHeadingText = transform.Find("MainPlayArea/TopHeader/TurnHeadingText")?.GetComponent<Text>();
+            if (roundEyebrowText == null) roundEyebrowText = transform.Find("MainPlayArea/TopHeader/RoundEyebrowText")?.GetComponent<TextMeshProUGUI>();
+            if (turnHeadingText == null) turnHeadingText = transform.Find("MainPlayArea/TopHeader/TurnHeadingText")?.GetComponent<TextMeshProUGUI>();
             if (playersStripContainer == null) playersStripContainer = transform.Find("MainPlayArea/PlayersStrip");
 
-            if (secretRoleText == null) secretRoleText = transform.Find("MainPlayArea/Notices/SecretRoleText")?.GetComponent<Text>();
-            if (lastRollText == null) lastRollText = transform.Find("MainPlayArea/Notices/LastRollText")?.GetComponent<Text>();
-            if (turnPromptText == null) turnPromptText = transform.Find("MainPlayArea/Notices/TurnPromptText")?.GetComponent<Text>();
+            if (secretRoleText == null) secretRoleText = transform.Find("MainPlayArea/Notices/SecretRoleText")?.GetComponent<TextMeshProUGUI>();
+            if (lastRollText == null) lastRollText = transform.Find("MainPlayArea/Notices/LastRollText")?.GetComponent<TextMeshProUGUI>();
+            if (turnPromptText == null) turnPromptText = transform.Find("MainPlayArea/Notices/TurnPromptText")?.GetComponent<TextMeshProUGUI>();
 
             if (cardSocketsContainer == null) cardSocketsContainer = transform.Find("MainPlayArea/CardSocketsArea");
-            if (selectionCountText == null) selectionCountText = transform.Find("MainPlayArea/ControlsLine/SelectionCountText")?.GetComponent<Text>();
+            if (selectionCountText == null) selectionCountText = transform.Find("MainPlayArea/ControlsLine/SelectionCountText")?.GetComponent<TextMeshProUGUI>();
             if (discardConfirmButton == null) discardConfirmButton = transform.Find("MainPlayArea/ControlsLine/DiscardConfirmButton")?.GetComponent<Button>();
 
-            if (graveListContainer == null) graveListContainer = transform.Find("PublicGraveArea/GraveScroll/GraveListContainer") ?? transform.Find("PublicGraveArea/GraveScroll");
+            // Prefer the MCP-authored horizontal content strip. Older scene
+            // versions serialized the viewport itself, so resolve this every
+            // time rather than retaining that legacy reference.
+            var authoredGraveContent = transform.Find("PublicGraveArea/GraveScroll/GraveListContainer");
+            graveListContainer = authoredGraveContent ?? graveListContainer ?? transform.Find("PublicGraveArea/GraveScroll");
+
+            if (graveModal == null) graveModal = transform.Find("PublicGraveArea")?.gameObject;
+            if (openGraveButton == null) openGraveButton = transform.Find("MainPlayArea/TopHeader/OpenGraveButton")?.GetComponent<Button>();
+            if (closeGraveButton == null) closeGraveButton = transform.Find("PublicGraveArea/CloseGraveButton")?.GetComponent<Button>();
 
             if (actionPanel == null) actionPanel = transform.Find("ActionPanel")?.gameObject;
             if (actionPanel != null)
             {
-                if (actionTitleText == null) actionTitleText = actionPanel.transform.Find("ActionTitleText")?.GetComponent<Text>();
-                if (targetDropdown1 == null) targetDropdown1 = actionPanel.transform.Find("TargetDropdown")?.GetComponent<Dropdown>();
-                if (roleDropdown1 == null) roleDropdown1 = actionPanel.transform.Find("RoleDropdown")?.GetComponent<Dropdown>();
+                if (actionTitleText == null) actionTitleText = actionPanel.transform.Find("ActionTitleText")?.GetComponent<TextMeshProUGUI>();
+                if (targetDropdown1 == null) targetDropdown1 = actionPanel.transform.Find("TargetDropdown")?.GetComponent<TMP_Dropdown>();
+                if (roleDropdown1 == null) roleDropdown1 = actionPanel.transform.Find("RoleDropdown")?.GetComponent<TMP_Dropdown>();
                 if (actionConfirmButton == null) actionConfirmButton = actionPanel.transform.Find("ActionConfirmButton")?.GetComponent<Button>();
             }
 
             if (discussionPanel == null) discussionPanel = transform.Find("DiscussionPanel")?.gameObject;
             if (discussionPanel != null)
             {
-                if (discussionTimerText == null) discussionTimerText = discussionPanel.transform.Find("DiscTimerText")?.GetComponent<Text>();
-                if (skipVotesText == null) skipVotesText = discussionPanel.transform.Find("SkipVotesText")?.GetComponent<Text>();
+                if (discussionTimerText == null) discussionTimerText = discussionPanel.transform.Find("DiscTimerText")?.GetComponent<TextMeshProUGUI>();
+                if (skipVotesText == null) skipVotesText = discussionPanel.transform.Find("SkipVotesText")?.GetComponent<TextMeshProUGUI>();
                 if (skipDiscussionButton == null) skipDiscussionButton = discussionPanel.transform.Find("SkipButton")?.GetComponent<Button>();
-                if (chatLogText == null) chatLogText = discussionPanel.transform.Find("ChatBox/ChatLogText")?.GetComponent<Text>();
+                if (chatLogText == null) chatLogText = discussionPanel.transform.Find("ChatBox/ChatLogText")?.GetComponent<TextMeshProUGUI>();
                 if (chatInputField == null) chatInputField = discussionPanel.transform.Find("ChatInput")?.GetComponent<InputField>();
                 if (chatSendButton == null) chatSendButton = discussionPanel.transform.Find("SendChatButton")?.GetComponent<Button>();
             }
 
+            if (diceRoll == null) diceRoll = GetComponentInChildren<RealmDiceRoll>(true);
+
+            if (warningToast == null) warningToast = transform.Find("WarningToast")?.gameObject;
+            if (warningToast != null && warningToastText == null)
+                warningToastText = warningToast.transform.Find("WarningText")?.GetComponent<TextMeshProUGUI>();
+
             if (resultsPanel == null) resultsPanel = transform.Find("ResultsPanel")?.gameObject;
             if (resultsPanel != null)
             {
-                if (resultsRankingsText == null) resultsRankingsText = resultsPanel.transform.Find("RankingsText")?.GetComponent<Text>();
+                if (resultsRankingsText == null) resultsRankingsText = resultsPanel.transform.Find("RankingsText")?.GetComponent<TextMeshProUGUI>();
                 if (returnLobbyButton == null) returnLobbyButton = resultsPanel.transform.Find("ReturnLobbyButton")?.GetComponent<Button>();
             }
 
             // Apply Noto font to all texts
-            foreach (var t in GetComponentsInChildren<Text>(true))
+            foreach (var t in GetComponentsInChildren<TextMeshProUGUI>(true))
             {
                 t.font = font;
             }
@@ -161,36 +255,70 @@ namespace Realm
 
             gameObject.SetActive(true);
 
+            UpdateDiceStage(state);
             UpdateHeaderAndNotices(state);
             UpdatePlayersStrip(state);
             UpdateHandAndSockets(state);
-            UpdatePublicGrave(state);
+            // The grave is a modal now; rebuilding it while hidden would lay out
+            // against a zero-sized viewport, so it refreshes on open instead.
+            if (graveModal != null && graveModal.activeSelf) UpdatePublicGrave(state);
             UpdateActionPhase(state);
             UpdateDiscussionPhase(state);
             UpdateResultsPhase(state);
         }
 
+        private static string PlayerName(GameState state, int index)
+        {
+            if (state.players != null)
+            {
+                foreach (var p in state.players)
+                    if (p.index == index) return p.name;
+            }
+            return "플레이어";
+        }
+
+        private void UpdateDiceStage(GameState state)
+        {
+            if (diceRoll == null) return;
+
+            var roll = state.lastRoll;
+            if (state.phase == "round" && roll != null && roll.round == state.round)
+                diceRoll.Play(roll, PlayerName(state, roll.playerIndex));
+            else
+                diceRoll.Dismiss();
+        }
+
         private void UpdateHeaderAndNotices(GameState state)
         {
+            bool isRound = state.phase == "round";
             bool isFinal = state.round == 4;
+
             if (roundEyebrowText != null)
-                roundEyebrowText.text = $"방 코드: {state.roomCode}  ·  {state.round}라운드 {(isFinal ? "마지막 비공개 버리기" : "공개 버리기")}";
+            {
+                string phaseLabel;
+                if (isRound) phaseLabel = $"{state.round}라운드 {(isFinal ? "마지막 비공개 버리기" : "공개 버리기")}";
+                else if (state.phase == "discussion") phaseLabel = $"{state.round}라운드 토론";
+                else if (state.phase == "actions") phaseLabel = "직업 능력 발동";
+                else if (state.phase == "results") phaseLabel = "최종 결산";
+                else phaseLabel = "진행 중";
+                roundEyebrowText.text = $"방 코드: {state.roomCode}  ·  {phaseLabel}";
+            }
 
             var current = (state.players != null && state.turn >= 0 && state.turn < state.players.Length) ? state.players[state.turn] : null;
             bool isMyTurn = state.you != null && state.you.canDiscard;
 
             if (turnHeadingText != null)
             {
-                if (isMyTurn)
+                turnHeadingText.color = Color.white;
+                if (state.phase == "results") turnHeadingText.text = "게임이 끝났습니다.";
+                else if (state.phase == "discussion") turnHeadingText.text = "토론 중입니다.";
+                else if (state.phase == "actions") turnHeadingText.text = "직업 능력을 발동하는 중입니다.";
+                else if (isMyTurn)
                 {
                     turnHeadingText.text = "★ 당신의 차례입니다.";
                     turnHeadingText.color = new Color(1f, 0.90f, 0.45f);
                 }
-                else
-                {
-                    turnHeadingText.text = (current != null) ? $"{current.name} 플레이어의 차례입니다." : "진행 중...";
-                    turnHeadingText.color = Color.white;
-                }
+                else turnHeadingText.text = (current != null) ? $"{current.name} 플레이어의 차례입니다." : "진행 중...";
             }
 
             if (secretRoleText != null)
@@ -209,20 +337,23 @@ namespace Realm
 
             if (lastRollText != null)
             {
-                if (state.lastRoll > 0)
-                {
-                    string pName = (current != null) ? current.name : "플레이어";
-                    lastRollText.text = $"최근 D6 · <b>{pName}</b> → <b>{state.lastRoll}</b>";
-                }
-                else
-                {
-                    lastRollText.text = "";
-                }
+                var roll = state.lastRoll;
+                lastRollText.text = (roll != null && roll.round == state.round)
+                    ? $"최근 D6 · <b>{PlayerName(state, roll.playerIndex)}</b> → <b>{roll.value}</b>"
+                    : "";
             }
 
             if (turnPromptText != null)
             {
-                if (state.required <= 0)
+                // Discard instructions only make sense while discarding; other
+                // phases were showing a meaningless "0~0장을 버리세요".
+                if (!isRound)
+                {
+                    if (state.phase == "discussion") turnPromptText.text = "상대의 버림패를 읽고 직업을 추리하세요.";
+                    else if (state.phase == "actions") turnPromptText.text = "직업 능력 처리가 끝나면 결산으로 넘어갑니다.";
+                    else turnPromptText.text = "";
+                }
+                else if (state.required <= 0)
                 {
                     int max = Math.Min(3, state.you?.hand != null ? state.you.hand.Length : 3);
                     turnPromptText.text = $"0~{max}장을 {(isFinal ? "비공개로" : "공개로")} 버리세요.";
@@ -243,26 +374,30 @@ namespace Realm
                 Destroy(playersStripContainer.GetChild(i).gameObject);
             }
 
-            var font = RealmCard.GetNotoFont();
+            var font = RealmCard.GetNotoTmpFont();
 
             foreach (var p in state.players)
             {
-                var pillGo = new GameObject($"PlayerPill_{p.index}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                var pillGo = new GameObject($"PlayerPill_{p.index}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
                 pillGo.transform.SetParent(playersStripContainer, false);
                 var pr = pillGo.GetComponent<RectTransform>();
-                pr.sizeDelta = new Vector2(160f, 44f);
+                pr.anchorMin = new Vector2(0.5f, 0.5f);
+                pr.anchorMax = new Vector2(0.5f, 0.5f);
+                pr.pivot = new Vector2(0.5f, 0.5f);
+                pr.sizeDelta = new Vector2(196f, 50f);
+                var pillLayout = pillGo.GetComponent<LayoutElement>();
+                pillLayout.preferredWidth = 196f;
+                pillLayout.preferredHeight = 50f;
 
                 bool isCurrent = state.phase == "round" && p.index == state.turn;
                 bool isMe = state.you != null && p.index == state.you.index;
 
-                var img = pillGo.GetComponent<Image>();
-                img.color = isCurrent ? new Color(0.18f, 0.45f, 0.65f, 0.95f) : (isMe ? new Color(0.28f, 0.25f, 0.15f, 0.9f) : new Color(0.06f, 0.15f, 0.25f, 0.85f));
+                var plate = isCurrent ? pillTurnSprite : (isMe ? pillSelfSprite : pillIdleSprite);
+                var fallback = isCurrent ? new Color(0.06f, 0.19f, 0.34f, 0.98f)
+                    : (isMe ? new Color(0.14f, 0.11f, 0.06f, 0.98f) : new Color(0.025f, 0.075f, 0.14f, 0.95f));
+                ApplyPlate(pillGo.GetComponent<Image>(), plate, fallback);
 
-                var outl = pillGo.AddComponent<Outline>();
-                outl.effectColor = isCurrent ? new Color(1f, 0.85f, 0.4f) : new Color(0.25f, 0.38f, 0.5f);
-                outl.effectDistance = isCurrent ? new Vector2(2f, 2f) : new Vector2(1f, 1f);
-
-                var txtGo = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+                var txtGo = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
                 txtGo.transform.SetParent(pillGo.transform, false);
                 var tr = txtGo.GetComponent<RectTransform>();
                 tr.anchorMin = Vector2.zero;
@@ -270,10 +405,10 @@ namespace Realm
                 tr.offsetMin = new Vector2(8f, 2f);
                 tr.offsetMax = new Vector2(-8f, -2f);
 
-                var txt = txtGo.GetComponent<Text>();
+                var txt = txtGo.GetComponent<TextMeshProUGUI>();
                 txt.font = font;
-                txt.fontSize = 12;
-                txt.alignment = TextAnchor.MiddleCenter;
+                txt.fontSize = 17;
+                txt.alignment = TextAlignmentOptions.Center;
                 txt.color = Color.white;
 
                 string meTag = isMe ? " <color=#FFE08B>(나)</color>" : "";
@@ -287,11 +422,43 @@ namespace Realm
             if (cardSocketsContainer == null) return;
 
             bool isRound = state.phase == "round";
-            cardSocketsContainer.gameObject.SetActive(isRound);
+            bool showHand = isRound || state.phase == "discussion";
+            bool canSelect = isRound && state.you != null && state.you.canDiscard;
+            cardSocketsContainer.gameObject.SetActive(showHand);
             if (selectionCountText != null) selectionCountText.gameObject.SetActive(isRound);
             if (discardConfirmButton != null) discardConfirmButton.gameObject.SetActive(isRound);
 
-            if (!isRound) return;
+            if (!showHand) return;
+
+            // Scene-authored sockets are only visual frames. Hide every unused
+            // frame so the hand reads as cards, not as a row of empty slots.
+            int handCount = state.you?.hand?.Length ?? 0;
+            // The whole hand stays on one row at whatever width still fits, so a
+            // ten-card hand reads at the same proportions as a two-card one.
+            float cardScale = 1f;
+            var handGrid = cardSocketsContainer.GetComponent<GridLayoutGroup>();
+            if (handGrid != null && handCount > 0)
+            {
+                const float spacing = 10f;
+                float available = ((RectTransform)cardSocketsContainer).rect.width - spacing * (handCount - 1);
+                float cellWidth = Mathf.Clamp(available / handCount, 104f, CardWidth);
+                handGrid.spacing = new Vector2(spacing, spacing);
+                handGrid.cellSize = new Vector2(cellWidth, cellWidth * (CardHeight / CardWidth));
+                cardScale = cellWidth / CardWidth;
+            }
+            for (int i = 0; i < _socketSlots.Count; i++)
+            {
+                bool hasCard = i < handCount;
+                if (_socketSlots[i].gameObject.activeSelf != hasCard)
+                    _socketSlots[i].gameObject.SetActive(hasCard);
+
+                var socketImage = _socketSlots[i].GetComponent<Image>();
+                if (socketImage != null) socketImage.color = new Color(0f, 0f, 0f, 0f);
+                var socketOutline = _socketSlots[i].GetComponent<Outline>();
+                if (socketOutline != null) socketOutline.enabled = false;
+                var indexText = _socketSlots[i].Find("IndexText")?.GetComponent<TextMeshProUGUI>();
+                if (indexText != null) indexText.enabled = false;
+            }
 
             if (state.you?.hand != null)
             {
@@ -309,7 +476,8 @@ namespace Realm
 
                     var cardGo = InstantiateCardPrefab(parentSocket);
                     var rc = cardGo.GetComponent<RealmCard>();
-                    rc.Setup(cData.id, cData.type, state.you.canDiscard);
+                    rc.Setup(cData.id, cData.type, canSelect, mini: false);
+                    rc.SetDisplayScale(cardScale);
                     rc.SetSelected(_chosenCardIds.Contains(cData.id));
                     rc.OnClicked += OnCardClicked;
                     _spawnedCards.Add(rc);
@@ -350,12 +518,15 @@ namespace Realm
             int count = _chosenCardIds.Count;
             int req = _latestState.required;
             bool valid = (req <= 0) ? (count <= 3) : (count == req);
+            bool rolling = diceRoll != null && diceRoll.IsRolling;
 
             if (selectionCountText != null)
-                selectionCountText.text = req <= 0 ? $"{count}장 선택" : $"{count}장 선택 / {req}장 필수";
+                selectionCountText.text = rolling
+                    ? "주사위 확인 중…"
+                    : (req <= 0 ? $"{count}장 선택" : $"{count}장 선택 / {req}장 필수");
 
             if (discardConfirmButton != null)
-                discardConfirmButton.interactable = _latestState.you.canDiscard && valid;
+                discardConfirmButton.interactable = _latestState.you.canDiscard && valid && !rolling;
         }
 
         private void OnDiscardConfirmClicked()
@@ -382,176 +553,226 @@ namespace Realm
                 Destroy(graveListContainer.GetChild(i).gameObject);
             }
 
-            var font = RealmCard.GetNotoFont();
+            var font = RealmCard.GetNotoTmpFont();
+
+            float rowWidth = ((RectTransform)graveListContainer).rect.width - GraveContentPadding;
+            float pilesWidth = rowWidth * 0.96f;
+            float slotWidth = (pilesWidth - GraveSlotSpacing * (GraveSlotCount - 1)) / GraveSlotCount;
 
             foreach (var p in state.players)
             {
-                // Player row in grave
-                var rowGo = new GameObject($"GraveRow_{p.name}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                bool hasVisibleDiscard = (p.publicDiscard != null && p.publicDiscard.Length > 0) || p.finalDiscardCount > 0;
+                if (!hasVisibleDiscard) continue;
+
+                // One full-width row per player, stacked by the container's
+                // VerticalLayoutGroup so the modal scrolls vertically.
+                var rowGo = new GameObject($"GraveRow_{p.name}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
                 rowGo.transform.SetParent(graveListContainer, false);
-                var rowRect = rowGo.GetComponent<RectTransform>();
-                rowRect.sizeDelta = new Vector2(580f, 155f);
+                var rowLayout = rowGo.GetComponent<LayoutElement>();
+                rowLayout.minHeight = GraveRowHeight;
+                rowLayout.preferredHeight = GraveRowHeight;
 
                 var rowImg = rowGo.GetComponent<Image>();
-                rowImg.color = new Color(0.04f, 0.10f, 0.18f, 0.75f);
+                ApplyPanelSkin(rowImg, new Color(0.015f, 0.055f, 0.10f, 0.96f));
                 var rowOutl = rowGo.AddComponent<Outline>();
                 rowOutl.effectColor = new Color(0.2f, 0.35f, 0.5f, 0.4f);
 
                 // Player name label
-                var nameGo = new GameObject("PlayerName", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+                var nameGo = new GameObject("PlayerName", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
                 nameGo.transform.SetParent(rowGo.transform, false);
                 var nr = nameGo.GetComponent<RectTransform>();
-                nr.anchorMin = new Vector2(0.02f, 0.78f);
+                nr.anchorMin = new Vector2(0.02f, 0.84f);
                 nr.anchorMax = new Vector2(0.98f, 0.98f);
                 nr.offsetMin = Vector2.zero;
                 nr.offsetMax = Vector2.zero;
 
-                var nt = nameGo.GetComponent<Text>();
+                var nt = nameGo.GetComponent<TextMeshProUGUI>();
                 nt.font = font;
-                nt.fontSize = 14;
-                nt.fontStyle = FontStyle.Bold;
+                nt.fontSize = 19;
+                nt.fontStyle = FontStyles.Bold;
                 nt.color = new Color(1f, 0.90f, 0.65f);
                 nt.text = $"<b>{p.name}</b>";
 
                 // Piles container
-                var pilesGo = new GameObject("PilesContainer", typeof(RectTransform), typeof(HorizontalLayoutGroup));
+                var pilesGo = new GameObject("PilesContainer", typeof(RectTransform));
                 pilesGo.transform.SetParent(rowGo.transform, false);
                 var pr = pilesGo.GetComponent<RectTransform>();
-                pr.anchorMin = new Vector2(0.02f, 0.05f);
-                pr.anchorMax = new Vector2(0.98f, 0.75f);
+                pr.anchorMin = new Vector2(0.02f, 0.02f);
+                pr.anchorMax = new Vector2(0.98f, 0.82f);
                 pr.offsetMin = Vector2.zero;
                 pr.offsetMax = Vector2.zero;
 
-                var hlg = pilesGo.GetComponent<HorizontalLayoutGroup>();
-                hlg.spacing = 25f;
-                hlg.childAlignment = TextAnchor.MiddleLeft;
-                hlg.childControlWidth = false;
-                hlg.childControlHeight = false;
-
-                bool hasAnyDiscard = false;
-
-                // 1R, 2R, 3R
+                // All four rounds always get a slot, so the 1R/2R/3R/4R columns
+                // line up across every player even when a round is empty.
                 for (int r = 1; r <= 3; r++)
                 {
                     int roundNum = r;
                     var roundCards = (p.publicDiscard != null) ? p.publicDiscard.Where(c => c.round == roundNum || (c.round == 0 && roundNum == 1)).ToArray() : new CardData[0];
-                    if (roundCards.Length == 0) continue;
-
-                    hasAnyDiscard = true;
-                    CreateDiscardPileUI(pilesGo.transform, $"{roundNum}R", roundCards, font);
+                    CreateDiscardPileUI(pilesGo.transform, $"{roundNum}R", roundCards, font, slotWidth, roundNum - 1);
                 }
-
-                // 4R Final Discards (Secret)
-                if (p.finalDiscardCount > 0)
-                {
-                    hasAnyDiscard = true;
-                    CreateSecretPileUI(pilesGo.transform, "4R", p.finalDiscardCount, font);
-                }
-
-                if (!hasAnyDiscard)
-                {
-                    var emptyTxtGo = new GameObject("EmptyText", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-                    emptyTxtGo.transform.SetParent(pilesGo.transform, false);
-                    var et = emptyTxtGo.GetComponent<Text>();
-                    et.font = font;
-                    et.fontSize = 13;
-                    et.color = new Color(0.5f, 0.6f, 0.7f);
-                    et.text = "(아직 버린 카드 없음)";
-                }
+                CreateSecretPileUI(pilesGo.transform, "4R", p.finalDiscardCount, font, slotWidth, 3);
             }
+
         }
 
-        private void CreateDiscardPileUI(Transform parent, string roundLabel, CardData[] cards, Font font)
+        private void OnOpenGraveClicked()
         {
-            var pileGo = new GameObject($"Pile_{roundLabel}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(DiscardPileHover));
-            pileGo.transform.SetParent(parent, false);
-            var rect = pileGo.GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(100f, 130f);
+            if (graveModal == null) return;
+            graveModal.SetActive(true);
+            if (_latestState != null) UpdatePublicGrave(_latestState);
 
-            var img = pileGo.GetComponent<Image>();
-            img.color = new Color(0.08f, 0.16f, 0.25f, 0.4f);
+            var scroll = graveModal.GetComponentInChildren<ScrollRect>(true);
+            if (scroll != null) scroll.verticalNormalizedPosition = 1f;
+        }
 
-            // Round Badge (Top Left)
-            var badgeGo = new GameObject("Badge", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            badgeGo.transform.SetParent(pileGo.transform, false);
-            var br = badgeGo.GetComponent<RectTransform>();
-            br.anchorMin = new Vector2(0f, 0.8f);
-            br.anchorMax = new Vector2(0.4f, 1f);
-            br.offsetMin = Vector2.zero;
-            br.offsetMax = Vector2.zero;
-            badgeGo.GetComponent<Image>().color = new Color(0.18f, 0.40f, 0.60f, 0.9f);
+        private void OnCloseGraveClicked()
+        {
+            if (graveModal != null) graveModal.SetActive(false);
+        }
 
-            var btGo = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-            btGo.transform.SetParent(badgeGo.transform, false);
-            var btr = btGo.GetComponent<RectTransform>();
-            btr.anchorMin = Vector2.zero;
-            btr.anchorMax = Vector2.one;
-            btr.offsetMin = Vector2.zero;
-            btr.offsetMax = Vector2.zero;
-            var bt = btGo.GetComponent<Text>();
-            bt.font = font;
-            bt.fontSize = 11;
-            bt.fontStyle = FontStyle.Bold;
-            bt.alignment = TextAnchor.MiddleCenter;
-            bt.color = Color.white;
-            bt.text = roundLabel;
+        private void CreateDiscardPileUI(Transform parent, string roundLabel, CardData[] cards, TMP_FontAsset font, float slotWidth, int slotIndex)
+        {
+            var pile = CreateGraveSlot(parent, $"Pile_{roundLabel}", roundLabel, font, slotWidth, slotIndex,
+                publicSlotSprite, new Color(0.025f, 0.09f, 0.16f, 0.94f),
+                roundBadgeSprite, new Color(0.18f, 0.40f, 0.60f, 0.9f), 64f);
 
-            // Spawn mini cards in pile
             foreach (var cData in cards)
             {
-                var cardGo = InstantiateCardPrefab(pileGo.transform);
+                var cardGo = InstantiateCardPrefab(pile);
                 var rc = cardGo.GetComponent<RealmCard>();
-                rc.Setup(cData.id, cData.type, false, mini: true);
+                // Full game card, so the win condition is readable straight
+                // from the grave rather than only on the player's own hand.
+                rc.Setup(cData.id, cData.type, false, mini: false);
+                rc.SetDisplayScale(GraveCardScale);
+                DisableCardRaycasts(cardGo);
             }
 
-            var hover = pileGo.GetComponent<DiscardPileHover>();
-            hover.RefreshStack();
+            FinishGraveSlot(pile, cards.Length, font);
         }
 
-        private void CreateSecretPileUI(Transform parent, string roundLabel, int count, Font font)
+        private void CreateSecretPileUI(Transform parent, string roundLabel, int count, TMP_FontAsset font, float slotWidth, int slotIndex)
         {
-            var pileGo = new GameObject($"SecretPile_{roundLabel}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(DiscardPileHover));
-            pileGo.transform.SetParent(parent, false);
-            var rect = pileGo.GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(100f, 130f);
-
-            var img = pileGo.GetComponent<Image>();
-            img.color = new Color(0.15f, 0.12f, 0.20f, 0.4f);
-
-            // Badge
-            var badgeGo = new GameObject("Badge", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            badgeGo.transform.SetParent(pileGo.transform, false);
-            var br = badgeGo.GetComponent<RectTransform>();
-            br.anchorMin = new Vector2(0f, 0.8f);
-            br.anchorMax = new Vector2(0.55f, 1f);
-            br.offsetMin = Vector2.zero;
-            br.offsetMax = Vector2.zero;
-            badgeGo.GetComponent<Image>().color = new Color(0.55f, 0.20f, 0.20f, 0.9f);
-
-            var btGo = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-            btGo.transform.SetParent(badgeGo.transform, false);
-            var btr = btGo.GetComponent<RectTransform>();
-            btr.anchorMin = Vector2.zero;
-            btr.anchorMax = Vector2.one;
-            btr.offsetMin = Vector2.zero;
-            btr.offsetMax = Vector2.zero;
-            var bt = btGo.GetComponent<Text>();
-            bt.font = font;
-            bt.fontSize = 11;
-            bt.fontStyle = FontStyle.Bold;
-            bt.alignment = TextAnchor.MiddleCenter;
-            bt.color = Color.white;
-            bt.text = $"{roundLabel} 비공개";
+            // ART_DIRECTION pins the secret state to violet (#513a71), not the
+            // red this used to fall back to.
+            var pile = CreateGraveSlot(parent, $"SecretPile_{roundLabel}", $"{roundLabel} 비공개", font, slotWidth, slotIndex,
+                secretSlotSprite, new Color(0.19f, 0.13f, 0.28f, 0.95f),
+                secretBadgeSprite, new Color(0.32f, 0.23f, 0.44f, 0.92f), 112f);
 
             for (int i = 0; i < count; i++)
             {
-                var cardGo = InstantiateCardPrefab(pileGo.transform);
+                var cardGo = InstantiateCardPrefab(pile);
                 var rc = cardGo.GetComponent<RealmCard>();
-                rc.Setup("", "", false, mini: true); // Face-down
+                rc.Setup("", "", false, mini: false); // Face-down
+                rc.SetDisplayScale(GraveCardScale);
+                DisableCardRaycasts(cardGo);
             }
 
-            var hover = pileGo.GetComponent<DiscardPileHover>();
-            hover.RefreshStack();
+            FinishGraveSlot(pile, count, font);
+        }
+
+        private Transform CreateGraveSlot(Transform parent, string name, string badgeLabel, TMP_FontAsset font,
+            float slotWidth, int slotIndex, Sprite surfaceSprite, Color surfaceTint,
+            Sprite badgeSprite, Color badgeTint, float badgeWidth)
+        {
+            var pileGo = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(DiscardPileHover));
+            pileGo.transform.SetParent(parent, false);
+
+            // Slots are placed by hand rather than by a layout group: every
+            // round then occupies the same x across players, and a hovered pile
+            // is free to jump to the front without disturbing the arrangement.
+            var slotRect = pileGo.GetComponent<RectTransform>();
+            slotRect.anchorMin = new Vector2(0f, 0.5f);
+            slotRect.anchorMax = new Vector2(0f, 0.5f);
+            slotRect.pivot = new Vector2(0f, 0.5f);
+            slotRect.sizeDelta = new Vector2(slotWidth, GraveSlotHeight);
+            slotRect.anchoredPosition = new Vector2(slotIndex * (slotWidth + GraveSlotSpacing), 0f);
+
+            ApplyPlate(pileGo.GetComponent<Image>(), surfaceSprite, surfaceTint);
+
+            var badgeGo = new GameObject("Badge", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            badgeGo.transform.SetParent(pileGo.transform, false);
+            var br = badgeGo.GetComponent<RectTransform>();
+            br.anchorMin = new Vector2(0f, 1f);
+            br.anchorMax = new Vector2(0f, 1f);
+            br.pivot = new Vector2(0f, 1f);
+            br.anchoredPosition = new Vector2(8f, -8f);
+            br.sizeDelta = new Vector2(badgeWidth, 30f);
+            ApplyPlate(badgeGo.GetComponent<Image>(), badgeSprite, badgeTint);
+
+            var btGo = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
+            btGo.transform.SetParent(badgeGo.transform, false);
+            var btr = btGo.GetComponent<RectTransform>();
+            btr.anchorMin = Vector2.zero;
+            btr.anchorMax = Vector2.one;
+            btr.offsetMin = Vector2.zero;
+            btr.offsetMax = Vector2.zero;
+            var bt = btGo.GetComponent<TextMeshProUGUI>();
+            bt.font = font;
+            bt.fontSize = 14;
+            bt.fontStyle = FontStyles.Bold;
+            bt.alignment = TextAlignmentOptions.Center;
+            bt.color = Color.white;
+            bt.text = badgeLabel;
+
+            return pileGo.transform;
+        }
+
+        private static void FinishGraveSlot(Transform pile, int cardCount, TMP_FontAsset font)
+        {
+            if (cardCount == 0)
+            {
+                var emptyGo = new GameObject("EmptyText", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
+                emptyGo.transform.SetParent(pile, false);
+                var er = emptyGo.GetComponent<RectTransform>();
+                er.anchorMin = Vector2.zero;
+                er.anchorMax = new Vector2(1f, 0.76f);
+                er.offsetMin = Vector2.zero;
+                er.offsetMax = Vector2.zero;
+                var et = emptyGo.GetComponent<TextMeshProUGUI>();
+                et.font = font;
+                et.fontSize = 16;
+                et.alignment = TextAlignmentOptions.Center;
+                et.color = new Color(0.40f, 0.50f, 0.60f);
+                et.text = "버린 카드 없음";
+                return;
+            }
+
+            pile.GetComponent<DiscardPileHover>().RefreshStack();
+        }
+
+        // The pile root owns hover input. Child card graphics are visual-only,
+        // so entering a card cannot emit a false exit on the pile.
+        private static void DisableCardRaycasts(GameObject cardGo)
+        {
+            foreach (var graphic in cardGo.GetComponentsInChildren<Graphic>(true))
+                graphic.raycastTarget = false;
+        }
+
+        private void ApplyPanelSkin(Image image, Color tint)
+        {
+            if (image == null) return;
+            image.sprite = null;
+            image.type = Image.Type.Simple;
+            image.preserveAspect = false;
+            image.color = tint;
+        }
+
+        // Authored plate art, falling back to the flat tint when a sprite has
+        // not been assigned so the UI still reads if art is missing.
+        private static void ApplyPlate(Image image, Sprite sprite, Color fallbackTint)
+        {
+            if (image == null) return;
+            image.preserveAspect = false;
+            if (sprite == null)
+            {
+                image.sprite = null;
+                image.type = Image.Type.Simple;
+                image.color = fallbackTint;
+                return;
+            }
+            image.sprite = sprite;
+            image.type = Image.Type.Sliced;
+            image.color = Color.white;
         }
 
         private void UpdateActionPhase(GameState state)
@@ -685,7 +906,7 @@ namespace Realm
             if (resultsRankingsText != null)
             {
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine("<b>🏆 게임 종료 · 최종 결산</b>\n");
+                sb.AppendLine("<b>★ 게임 종료 · 최종 결산</b>\n");
 
                 if (state.players != null)
                 {
@@ -719,9 +940,7 @@ namespace Realm
                 return go;
             }
 
-            var fallbackGo = new GameObject("Card", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(Outline), typeof(RealmCard));
-            fallbackGo.transform.SetParent(parent, false);
-            return fallbackGo;
+            throw new InvalidOperationException("Assign the MCP-authored RealmCardTemplate to RealmGameUI.cardPrefab.");
         }
     }
 }

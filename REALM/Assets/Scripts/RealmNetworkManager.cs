@@ -17,6 +17,7 @@ namespace Realm
         private const string WsBase = "wss://crown-discard-online.caddman771144.workers.dev/api";
 
         public event Action<GameState> OnStateUpdated;
+        public event Action<string> OnServerError;
         
         private ClientWebSocket _webSocket;
         private CancellationTokenSource _cts;
@@ -204,6 +205,13 @@ namespace Realm
                 {
                     OnStateUpdated?.Invoke(msg.state);
                 }
+                else if (msg != null && msg.type == "ERROR")
+                {
+                    var error = JsonUtility.FromJson<ErrorMessage>(json);
+                    string message = string.IsNullOrWhiteSpace(error?.message) ? "요청을 처리할 수 없습니다." : error.message;
+                    Debug.LogWarning($"[Server Error] {message}");
+                    OnServerError?.Invoke(message);
+                }
                 else
                 {
                     Debug.Log($"[WS Non-State Message]: {json}");
@@ -219,7 +227,9 @@ namespace Realm
         {
             if (_webSocket == null || _webSocket.State != WebSocketState.Open)
             {
+                const string message = "서버 연결이 끊어져 요청을 보낼 수 없습니다.";
                 Debug.LogWarning($"[WS Send Failed] Socket not open. State: {_webSocket?.State}");
+                OnServerError?.Invoke(message);
                 return;
             }
 
