@@ -21,10 +21,13 @@ namespace Realm
         [SerializeField] private Button confirmButton;
         [SerializeField] private Button cancelButton;
         [SerializeField] private Button rerollButton;
+        [Header("Reference mode")]
+        [SerializeField] private Button codexButton;
 
         private readonly List<string> _chosen = new List<string>();
         private readonly Dictionary<string, RoleOption> _options = new Dictionary<string, RoleOption>();
         private int _playerTarget = 5;
+        private bool _readOnly;
 
         public bool IsOpen { get { return panel != null && panel.activeSelf; } }
         public event System.Action<string[]> OnConfirmed;
@@ -41,6 +44,7 @@ namespace Realm
             if (confirmButton != null) confirmButton.onClick.AddListener(Confirm);
             if (cancelButton != null) cancelButton.onClick.AddListener(Close);
             if (rerollButton != null) rerollButton.onClick.AddListener(Reroll);
+            if (codexButton != null) codexButton.onClick.AddListener(OpenCodex);
             if (panel != null) panel.SetActive(false);
         }
 
@@ -49,10 +53,22 @@ namespace Realm
             if (confirmButton != null) confirmButton.onClick.RemoveListener(Confirm);
             if (cancelButton != null) cancelButton.onClick.RemoveListener(Close);
             if (rerollButton != null) rerollButton.onClick.RemoveListener(Reroll);
+            if (codexButton != null) codexButton.onClick.RemoveListener(OpenCodex);
+        }
+
+        // Same grid, no selection: a reference sheet of every role's effect.
+        public void OpenCodex()
+        {
+            _readOnly = true;
+            _chosen.Clear();
+            BuildOptions();
+            if (panel != null) panel.SetActive(true);
+            Refresh();
         }
 
         public void Open(int playerTarget, IEnumerable<string> preselected)
         {
+            _readOnly = false;
             _playerTarget = Mathf.Clamp(playerTarget, 5, 10);
             _chosen.Clear();
             if (preselected != null)
@@ -138,6 +154,7 @@ namespace Realm
 
         private void Toggle(string key)
         {
+            if (_readOnly) return;
             if (_chosen.Contains(key)) _chosen.Remove(key);
             else if (_chosen.Count < _playerTarget) _chosen.Add(key);
             Refresh();
@@ -159,6 +176,28 @@ namespace Realm
                         : new Color(0.435f, 0.545f, 0.639f, 0.45f);
                     pair.Value.outline.effectDistance = on ? new Vector2(2f, -2f) : new Vector2(1f, -1f);
                 }
+            }
+
+            // Reference mode hides everything about picking and just lists effects.
+            if (rerollButton != null) rerollButton.gameObject.SetActive(!_readOnly);
+            if (confirmButton != null) confirmButton.gameObject.SetActive(!_readOnly);
+            if (balanceText != null) balanceText.gameObject.SetActive(!_readOnly);
+            if (cancelButton != null)
+            {
+                var cancelLabel = cancelButton.GetComponentInChildren<TextMeshProUGUI>(true);
+                if (cancelLabel != null) cancelLabel.text = _readOnly ? "닫기" : "나중에";
+            }
+
+            if (_readOnly)
+            {
+                if (headlineText != null) headlineText.text = "직업 효과 — 25종";
+                if (countText != null) countText.text = $"총 {RealmCard.RoleInfo.Count}종";
+                if (problemText != null)
+                {
+                    problemText.text = "카드 점수는 좌측 숫자, 승리 조건은 아래 설명입니다.";
+                    problemText.color = new Color(0.725f, 0.851f, 1f);
+                }
+                return;
             }
 
             if (headlineText != null)

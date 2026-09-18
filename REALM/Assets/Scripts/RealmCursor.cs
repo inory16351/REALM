@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace Realm
@@ -41,7 +42,12 @@ namespace Realm
             var events = EventSystem.current;
             if (events == null) return State.Default;
 
-            var pointer = new PointerEventData(events) { position = Input.mousePosition };
+            // This project runs the Input System backend, so the legacy Input
+            // class throws. Pointer covers both mouse and touch.
+            var device = Pointer.current;
+            if (device == null) return State.Default;
+
+            var pointer = new PointerEventData(events) { position = device.position.ReadValue() };
             _hits.Clear();
             events.RaycastAll(pointer, _hits);
 

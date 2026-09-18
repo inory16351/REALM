@@ -80,8 +80,9 @@ namespace Realm
         private const float GraveSlotSpacing = 12f;
         private const float GraveContentPadding = 38f;
         private const float GraveCardScale = 0.78f;
-        private const float GraveSlotHeight = 226f;
-        private const float GraveRowHeight = 284f;
+        private const float GraveSlotHeight = 206f;
+        private const float GraveRowHeight = 292f;
+        private const float GraveBadgeHeight = 26f;
         private GameState _latestState;
         private CanvasGroup _warningCanvasGroup;
         private float _warningHideAt = -1f;
@@ -581,8 +582,8 @@ namespace Realm
                 var nameGo = new GameObject("PlayerName", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
                 nameGo.transform.SetParent(rowGo.transform, false);
                 var nr = nameGo.GetComponent<RectTransform>();
-                nr.anchorMin = new Vector2(0.02f, 0.84f);
-                nr.anchorMax = new Vector2(0.98f, 0.98f);
+                nr.anchorMin = new Vector2(0.02f, 0.865f);
+                nr.anchorMax = new Vector2(0.98f, 0.99f);
                 nr.offsetMin = Vector2.zero;
                 nr.offsetMax = Vector2.zero;
 
@@ -597,8 +598,10 @@ namespace Realm
                 var pilesGo = new GameObject("PilesContainer", typeof(RectTransform));
                 pilesGo.transform.SetParent(rowGo.transform, false);
                 var pr = pilesGo.GetComponent<RectTransform>();
+                // Leaves a strip above the slots for the round badges, which used
+                // to sit on top of the cards.
                 pr.anchorMin = new Vector2(0.02f, 0.02f);
-                pr.anchorMax = new Vector2(0.98f, 0.82f);
+                pr.anchorMax = new Vector2(0.98f, 0.735f);
                 pr.offsetMin = Vector2.zero;
                 pr.offsetMax = Vector2.zero;
 
@@ -634,7 +637,7 @@ namespace Realm
         {
             var pile = CreateGraveSlot(parent, $"Pile_{roundLabel}", roundLabel, font, slotWidth, slotIndex,
                 publicSlotSprite, new Color(0.025f, 0.09f, 0.16f, 0.94f),
-                roundBadgeSprite, new Color(0.18f, 0.40f, 0.60f, 0.9f), 64f);
+                roundBadgeSprite, new Color(0.18f, 0.40f, 0.60f, 0.9f), 68f);
 
             foreach (var cData in cards)
             {
@@ -689,14 +692,15 @@ namespace Realm
 
             ApplyPlate(pileGo.GetComponent<Image>(), surfaceSprite, surfaceTint);
 
+            // Sits just above the slot instead of over the first card.
             var badgeGo = new GameObject("Badge", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
             badgeGo.transform.SetParent(pileGo.transform, false);
             var br = badgeGo.GetComponent<RectTransform>();
             br.anchorMin = new Vector2(0f, 1f);
             br.anchorMax = new Vector2(0f, 1f);
-            br.pivot = new Vector2(0f, 1f);
-            br.anchoredPosition = new Vector2(8f, -8f);
-            br.sizeDelta = new Vector2(badgeWidth, 30f);
+            br.pivot = new Vector2(0f, 0f);
+            br.anchoredPosition = new Vector2(2f, 5f);
+            br.sizeDelta = new Vector2(badgeWidth, GraveBadgeHeight);
             ApplyPlate(badgeGo.GetComponent<Image>(), badgeSprite, badgeTint);
 
             var btGo = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
@@ -708,7 +712,7 @@ namespace Realm
             btr.offsetMax = Vector2.zero;
             var bt = btGo.GetComponent<TextMeshProUGUI>();
             bt.font = font;
-            bt.fontSize = 14;
+            bt.fontSize = 13;
             bt.fontStyle = FontStyles.Bold;
             bt.alignment = TextAlignmentOptions.Center;
             bt.color = Color.white;
