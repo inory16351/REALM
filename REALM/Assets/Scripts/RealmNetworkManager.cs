@@ -223,7 +223,14 @@ namespace Realm
             }
         }
 
-        public async void SendMessagePayload(string type, object payload = null)
+        // Action payloads vary too much between roles to model each as a
+        // serializable class, so this takes a payload that is already JSON.
+        public void SendMessageRaw(string type, string payloadJson)
+        {
+            SendMessagePayload(type, null, payloadJson);
+        }
+
+        public async void SendMessagePayload(string type, object payload = null, string rawPayloadJson = null)
         {
             if (_webSocket == null || _webSocket.State != WebSocketState.Open)
             {
@@ -234,7 +241,7 @@ namespace Realm
             }
 
             // Manual JSON construction to wrap payload
-            string payloadJson = payload != null ? JsonUtility.ToJson(payload) : "{}";
+            string payloadJson = rawPayloadJson ?? (payload != null ? JsonUtility.ToJson(payload) : "{}");
             string json = $"{{\"type\":\"{type}\", \"payload\":{payloadJson}}}";
             Debug.Log($"[WS Send] {json}");
 

@@ -35,8 +35,10 @@ namespace Realm
         public DieRoll lastRoll;
         public ChatMessage[] chat;
         public string[] log;
+        public int accusedCount;
         public YouState you;
         public ActionState action;
+        public ResultEntry[] results;
     }
 
     [Serializable]
@@ -60,6 +62,30 @@ namespace Realm
         public CardData[] hand;
         public bool canDiscard;
         public bool canAct;
+        public bool canAccuse;
+        public int accuseQuota;
+    }
+
+    // One row of the final scoreboard. `total` is already the sum of base,
+    // bonus and accusePoints; the parts are sent so the breakdown can be shown.
+    [Serializable]
+    public class ResultEntry
+    {
+        public int index;
+        public string name;
+        public string role;
+        public CardData[] hand;
+        public int finalDiscardCount;
+        public bool success;
+        // `base` is a C# keyword; `@base` declares a field whose real name is
+        // "base", which is what JsonUtility matches against the server payload.
+        public int @base;
+        public int bonus;
+        public int accusePoints;
+        public int accuseCorrect;
+        public int exposedBy;
+        public int total;
+        public string detail;
     }
 
     [Serializable]

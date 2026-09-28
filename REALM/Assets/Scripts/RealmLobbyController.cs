@@ -175,7 +175,7 @@ namespace Realm
             var instructions = controlPanel.Find("WaitingInstructions")?.GetComponent<TextMeshProUGUI>();
             if (instructions != null)
             {
-                instructions.text = "5명이 모두 모이면 게임을 시작할 수 있습니다.\n'봇 추가'를 눌러 빈 자리를 봇으로 채울 수 있습니다.";
+                instructions.text = "5명이 모이면 시작할 수 있습니다.\n빈자리는 '봇 추가'로 채우세요.";
             }
 
             var netStatus = controlPanel.Find("WaitingNetworkStatus")?.GetComponent<TextMeshProUGUI>();
@@ -318,6 +318,8 @@ namespace Realm
             rosterTitle.text = isHost ? $"참가자 · 1 / {SelectedPlayerTarget}" : "참가자 · 참가 요청";
             lobbyContent.SetActive(false);
             roomWaitingPanel.SetActive(true);
+            var lobbyHeader = transform.Find("LobbyHeaderTemplate");
+            if (lobbyHeader != null) lobbyHeader.gameObject.SetActive(false);
             if (gamePlayPanel != null) gamePlayPanel.SetActive(false);
 
             SetStatus("서버 연결 중...");
@@ -385,7 +387,7 @@ namespace Realm
                 var instructions = controlPanel.Find("WaitingInstructions")?.GetComponent<TextMeshProUGUI>();
                 if (instructions != null)
                 {
-                    instructions.text = $"{state.playerTarget}명이 모두 모이면 게임을 시작할 수 있습니다.\n'봇 추가'를 눌러 빈 자리를 봇으로 채울 수 있습니다.";
+                    instructions.text = $"{state.playerTarget}명이 모이면 시작할 수 있습니다.\n빈자리는 '봇 추가'로 채우세요.";
                 }
             }
 

@@ -121,7 +121,15 @@ namespace Realm
                 var nameText = go.transform.Find("Name")?.GetComponent<TextMeshProUGUI>();
                 var scoreText = go.transform.Find("Score")?.GetComponent<TextMeshProUGUI>();
                 var ruleText = go.transform.Find("Rule")?.GetComponent<TextMeshProUGUI>();
-                if (nameText != null) { nameText.font = font; nameText.text = info.name; }
+                // The success bonus (6-10) decides games far more than the card
+                // score does, so it belongs next to the name.
+                if (nameText != null)
+                {
+                    nameText.font = font;
+                    nameText.text = info.bonus > 0
+                        ? $"{info.name}  <size=72%><color=#FFE08B>성공 +{info.bonus}</color></size>"
+                        : info.name;
+                }
                 if (scoreText != null)
                 {
                     scoreText.font = font;

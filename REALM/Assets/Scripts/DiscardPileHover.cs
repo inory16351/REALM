@@ -12,6 +12,16 @@ namespace Realm
         [SerializeField] private float animSpeed = 12;
         private bool hovered;
         private bool pinned;
+
+        // What this pile represents, captured when the grave is built so the
+        // zoom view can be rebuilt at a readable size without re-reading the
+        // shrunken card instances sitting in the slot.
+        public string ownerName;
+        public string roundLabel;
+        public CardData[] cardData = new CardData[0];
+        public bool secret;
+        public int secretCount;
+        public System.Action<DiscardPileHover> onZoomRequested;
         private float currentStep;
         private float expandedStep;
         private RealmCard[] cards = new RealmCard[0];
@@ -99,6 +109,14 @@ namespace Realm
             if (hovered || pinned) transform.SetAsLastSibling();
             else transform.SetSiblingIndex(restingSiblingIndex);
         }
-        public void OnPointerClick(PointerEventData e) { pinned = !pinned; UpdateSorting(); }
+        // Clicking opens the zoom view; the cards in the slot are far too
+        // small to read. Falls back to the old pin-open behaviour if no zoom
+        // handler was attached.
+        public void OnPointerClick(PointerEventData e)
+        {
+            if (onZoomRequested != null) { onZoomRequested(this); return; }
+            pinned = !pinned;
+            UpdateSorting();
+        }
     }
 }
