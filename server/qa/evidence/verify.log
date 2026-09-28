@@ -1,0 +1,42 @@
+
+> crown-discard-online@0.0.0 verify
+> npm run cf-typegen && npx tsc --noEmit && node --check public/game.js && npm test
+
+
+> crown-discard-online@0.0.0 cf-typegen
+> wrangler types
+
+
+ ⛅️ wrangler 4.131.2
+────────────────────
+Generating project types...
+
+interface __BaseEnv_Env {
+	ASSETS: Fetcher;
+	GAME_ROOM: DurableObjectNamespace<import("./src/index").GameRoom>;
+}
+declare namespace Cloudflare {
+	interface GlobalProps {
+		mainModule: typeof import("./src/index");
+		durableNamespaces: "GameRoom";
+	}
+	interface Env extends __BaseEnv_Env {}
+}
+interface Env extends __BaseEnv_Env {}
+
+Generating runtime types...
+
+Runtime types generated.
+
+
+✨ Types written to worker-configuration.d.ts
+
+📖 Read about runtime types
+https://developers.cloudflare.com/workers/languages/typescript/#generate-types
+📣 Remember to rerun 'wrangler types' after you change your wrangler.jsonc file.
+
+
+> crown-discard-online@0.0.0 test
+> node tests/rules.test.js
+
+online.rules.static: PASS

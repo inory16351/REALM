@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PRETENDER · Online</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <header>
+      <div>
+        <p class="eyebrow">PRETENDER · SECRET ROLE · DISCARD</p>
+        <h1>PRETENDER <span class="online-mark">ONLINE</span></h1>
+      </div>
+      <div class="header-actions">
+        <a class="quiet help-link" href="rules.html" target="_blank" rel="noopener">규칙 도움말</a>
+        <span id="room-label" class="pill hidden"></span>
+        <button id="grave-button" class="quiet hidden" type="button">공개 무덤 확인</button>
+        <button id="leave-button" class="quiet hidden" type="button">다른 방</button>
+      </div>
+    </header>
+    <section id="game" aria-live="polite"></section>
+  </main>
+  <div id="dice-stage" class="dice-stage hidden" aria-live="assertive"></div>
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="game.js"></script>
+  <script src="grave-preview.js"></script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "authoritativeCommand": "npm run verify",
+  "suites": [
+    { "id": "typescript", "executed": true, "result": "PASS" },
+    { "id": "client-syntax", "executed": true, "result": "PASS" },
+    { "id": "online.rules.static", "executed": true, "result": "PASS" }
+  ],
+  "completeRun": {
+    "executed": true,
+    "runtime": "deployed Cloudflare Worker + Durable Object with Node WebSocket clients",
+    "steps": [
+      "방장으로 토론 시간 15초의 5인 방 생성",
+      "서로 다른 세션 4개로 방 코드 참가",
+      "방장이 균형 직업 조합 저장 후 게임 시작",
+      "서버가 배정한 비밀 직업과 10장 손패 확인",
+      "1라운드 D6 결과 2에 맞춰 카드 2장 선택 및 버리기",
+      "다음 플레이어 차례의 동일한 D6 결과 표시 확인",
+      "라운드 종료 뒤 토론 채팅이 전원에게 전파되는지 확인",
+      "Durable Object 알람으로 2라운드가 자동 시작되는지 확인"
+    ],
+    "result": "PASS"
+  },
+  "deployment": {
+    "executed": true,
+    "url": "https://crown-discard-online.caddman771144.workers.dev",
+    "version": "841f5ab4-afd4-4dd1-93de-ddfa5ef1d15e",
+    "publicRootRequest": "PASS (HTTP 200)"
+  },
+  "checkpoints": [
+    { "state": "room-created", "runtime": "browser", "visual": "NOT_CAPTURED: DOM verification used" },
+    { "state": "five-player-lobby", "runtime": "browser", "visual": "NOT_CAPTURED: DOM verification used" },
+    { "state": "private-hand-and-dice", "runtime": "browser", "visual": "NOT_CAPTURED: DOM verification used" },
+    { "state": "server-discard-advance", "runtime": "browser", "visual": "NOT_CAPTURED: DOM verification used" },
+    { "state": "rules-help", "runtime": "Wrangler local development server", "visual": "NOT_CAPTURED: HTTP 200 and role-help content verified" },
+    { "state": "host-score-balance-and-mercenary-exchange", "runtime": "static verification", "visual": "NOT_CAPTURED: server validation and exchange invariants verified" },
+    { "state": "king-low-count-fallback-and-card-rule-slot", "runtime": "deployed HTTP + static verification", "visual": "card slot PNG returned HTTP 200; CSS binding and Korean fallback rule verified" },
+    { "state": "full-grave-includes-private-final-round", "runtime": "static verification", "visual": "NOT_CAPTURED: king, knight, and pope full-grave predicates include final-round private discards; mercenary remains public-only by rule" },
+    { "state": "discussion-chat-and-shared-d6", "runtime": "deployed Cloudflare Worker + Durable Object", "visual": "NOT_CAPTURED: five WebSocket clients completed D6 discards, shared chat, and automatic next-round transition; source verifies central animation and countdown UI", "evidence": "qa/evidence/discussion-d6-e2e.json" },
+    { "state": "unanimous-discussion-skip", "runtime": "deployed Cloudflare Worker + Durable Object", "visual": "NOT_CAPTURED: all five players voted in a 180-second discussion and the game advanced to round 2 in 515 ms", "evidence": "qa/evidence/discussion-unanimous-skip-e2e.json" }
+  ]
+}

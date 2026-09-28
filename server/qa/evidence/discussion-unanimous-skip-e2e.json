@@ -1,0 +1,17 @@
+{
+  "runtime": "deployed Cloudflare Worker + Durable Object with five Node WebSocket clients",
+  "scenario": [
+    "Create a five-player room with a 180-second discussion setting.",
+    "Complete all five mandatory first-round D6 discards.",
+    "Confirm one discussion-end vote is visible to every client.",
+    "Submit the remaining four votes and wait for the next round."
+  ],
+  "observed": {
+    "discussionSeconds": 180,
+    "phase": "round",
+    "round": 2,
+    "elapsedMs": 515,
+    "remainingVotes": 0
+  },
+  "result": "PASS"
+}
